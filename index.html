@@ -1,0 +1,1779 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#0f1923">
+<title>Exchange Tracker — THB/BDT</title>
+<link rel="apple-touch-icon" href="data:,">
+<style>
+  html,body{margin:0;padding:0;background:#0f1923;}
+  *{-webkit-tap-highlight-color:transparent;}
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script>
+// Storage shim: saves data in this phone's browser (localStorage).
+// NOTE: data lives per-device. For shared multi-phone data, connect a backend later.
+window.storage = {
+  async get(key, shared) {
+    const v = localStorage.getItem("ext_" + key);
+    if (v === null) throw new Error("not found");
+    return { key, value: v, shared: !!shared };
+  },
+  async set(key, value, shared) {
+    localStorage.setItem("ext_" + key, value);
+    return { key, value, shared: !!shared };
+  },
+  async delete(key, shared) {
+    localStorage.removeItem("ext_" + key);
+    return { key, deleted: true, shared: !!shared };
+  },
+  async list(prefix, shared) {
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k.startsWith("ext_") && (!prefix || k.slice(4).startsWith(prefix))) keys.push(k.slice(4));
+    }
+    return { keys, prefix, shared: !!shared };
+  },
+};
+</script>
+<script type="text/babel" data-presets="env,react">
+const { useState, useEffect } = React;
+
+const TX_KEY = "exchange_transactions";
+const SUPPLIER_KEY = "exchange_suppliers";
+const RATE_KEY = "exchange_rate";
+const ADMIN_PW_KEY = "exchange_admin_pw";
+const STAFF_PW_KEY = "exchange_staff_pw";
+const FLOAT_KEY = "exchange_staff_float";
+const EXPENSE_KEY = "exchange_expenses";
+const OWNER_PHONE_KEY = "exchange_owner_phone";
+
+const initialForm = {
+  customerName: "",
+  customerPhone: "",
+  deliveryDate: "",
+  assignedTo: "",
+  thbAmount: "",
+  rate: "",
+  bdtAmount: "",
+  commission: "",
+  netBdt: "",
+  paymentMethod: "Cash",
+  amountPaid: "",
+  notes: "",
+};
+
+const initialBuyForm = {
+  supplierName: "",
+  supplierContact: "",
+  advanceFrom: null,
+  advanceAmt: 0,
+  thbAmount: "",
+  rate: "",
+  bdtCost: "",
+  amountPaid: "",
+  paymentMethod: "Cash",
+  paymentDate: new Date().toISOString().slice(0, 10),
+  notes: "",
+};
+
+function formatNum(n, d = 2) {
+  if (!n && n !== 0) return "—";
+  return Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function nowStr() { return new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }); }
+
+
+// ── Calendar date picker: shows DD-MM-YYYY, tap to open calendar, no typing ──
+function DateField({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const iso = value || new Date().toISOString().slice(0, 10);
+  const [viewY, setViewY] = useState(parseInt(iso.slice(0, 4)));
+  const [viewM, setViewM] = useState(parseInt(iso.slice(5, 7)) - 1);
+
+  const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const DOW = ["Su","Mo","Tu","We","Th","Fr","Sa"];
+
+  function fmt(isoStr) {
+    if (!isoStr) return "";
+    const [y, m, d] = isoStr.split("-");
+    return `${d}-${m}-${y}`;
+  }
+  function pad(n) { return String(n).padStart(2, "0"); }
+
+  const first = new Date(viewY, viewM, 1);
+  const startDow = first.getDay();
+  const daysInMonth = new Date(viewY, viewM + 1, 0).getDate();
+  const todayIso = new Date().toISOString().slice(0, 10);
+
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  function prevMonth() { if (viewM === 0) { setViewM(11); setViewY(viewY - 1); } else setViewM(viewM - 1); }
+  function nextMonth() { if (viewM === 11) { setViewM(0); setViewY(viewY + 1); } else setViewM(viewM + 1); }
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button style={{ width: "100%", background: "#0f1923", border: "1px solid #1e3a5f", borderRadius: 8, padding: "11px 12px", color: "#e8edf2", fontSize: 15, textAlign: "left", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+        onClick={() => { setOpen(o => !o); setViewY(parseInt(iso.slice(0, 4))); setViewM(parseInt(iso.slice(5, 7)) - 1); }}>
+        <span>📅 {fmt(iso)}</span>
+        <span style={{ color: "#4fc3f7", fontSize: 12 }}>{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div style={{ marginTop: 6, background: "#132030", border: "1px solid #2d6a9f", borderRadius: 12, padding: 12, boxShadow: "0 8px 24px rgba(0,0,0,0.5)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <button style={{ background: "#1a3a5c", border: "none", borderRadius: 8, color: "#4fc3f7", fontSize: 18, padding: "4px 14px", cursor: "pointer" }} onClick={prevMonth}>‹</button>
+            <span style={{ fontWeight: 800, fontSize: 14, color: "#e8edf2" }}>{MONTHS[viewM]} {viewY}</span>
+            <button style={{ background: "#1a3a5c", border: "none", borderRadius: 8, color: "#4fc3f7", fontSize: 18, padding: "4px 14px", cursor: "pointer" }} onClick={nextMonth}>›</button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginBottom: 4 }}>
+            {DOW.map(d => <div key={d} style={{ textAlign: "center", fontSize: 10, color: "#5a8aaa", fontWeight: 700, padding: "4px 0" }}>{d}</div>)}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2 }}>
+            {cells.map((d, i) => {
+              if (d === null) return <div key={`e${i}`} />;
+              const cellIso = `${viewY}-${pad(viewM + 1)}-${pad(d)}`;
+              const isSel = cellIso === iso;
+              const isToday = cellIso === todayIso;
+              return (
+                <button key={cellIso}
+                  style={{ padding: "8px 0", borderRadius: 8, border: isToday && !isSel ? "1px solid #4fc3f7" : "1px solid transparent", background: isSel ? "#1565c0" : "transparent", color: isSel ? "#fff" : "#e8edf2", fontWeight: isSel || isToday ? 800 : 400, fontSize: 13, cursor: "pointer" }}
+                  onClick={() => { onChange(cellIso); setOpen(false); }}>{d}</button>
+              );
+            })}
+          </div>
+          <button style={{ marginTop: 8, width: "100%", padding: "8px 0", borderRadius: 8, border: "1px solid #4fc3f755", background: "#0a2a30", color: "#4fc3f7", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+            onClick={() => { onChange(todayIso); setOpen(false); }}>Today ({fmt(todayIso)})</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function App() {
+  const [role, setRole] = useState(null); // null | "admin" | "staff"
+  const [screen, setScreen] = useState("roleSelect"); // roleSelect | setup | login | app
+  const [view, setView] = useState("dashboard");
+  const [wide, setWide] = useState(typeof window !== "undefined" && window.innerWidth >= 900);
+
+  const [transactions, setTransactions] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [floatEntries, setFloatEntries] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [defaultRate, setDefaultRate] = useState("");
+  const [adminPw, setAdminPw] = useState(null);
+  const [staffPw, setStaffPw] = useState(null);
+  const [loaded, setLoaded] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [form, setForm] = useState({ ...initialForm });
+  const [buyForm, setBuyForm] = useState({ ...initialBuyForm });
+  const [saved, setSaved] = useState(false);
+  const [filterDate, setFilterDate] = useState(todayStr());
+  const [histMode, setHistMode] = useState("day");
+
+  const [pwInput, setPwInput] = useState("");
+  const [pwError, setPwError] = useState("");
+  const [suAdmin, setSuAdmin] = useState("");
+  const [suAdmin2, setSuAdmin2] = useState("");
+  const [suStaff, setSuStaff] = useState("");
+  const [suStaff2, setSuStaff2] = useState("");
+  const [loginAs, setLoginAs] = useState("staff");
+  const [staffName, setStaffName] = useState("");
+  const [ownerPhone, setOwnerPhone] = useState(null);
+  const [suPhone, setSuPhone] = useState("");
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotPhone, setForgotPhone] = useState("");
+  const [forgotVerified, setForgotVerified] = useState(false);
+  const [resetPw, setResetPw] = useState("");
+  const [resetPw2, setResetPw2] = useState("");
+
+  useEffect(() => {
+    const onResize = () => setWide(window.innerWidth >= 900);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      // Load passwords with retries so a slow connection never wrongly shows first-time setup
+      let gotAdmin = null, gotStaff = null, gotPhone = null;
+      for (let attempt = 0; attempt < 3 && !gotAdmin; attempt++) {
+        try { const p = await window.storage.get(ADMIN_PW_KEY, true); if (p?.value) gotAdmin = p.value; } catch {}
+        if (!gotAdmin && attempt < 2) await new Promise(r => setTimeout(r, 800));
+      }
+      try { const p = await window.storage.get(STAFF_PW_KEY, true); if (p?.value) gotStaff = p.value; } catch {}
+      try { const p = await window.storage.get(OWNER_PHONE_KEY, true); if (p?.value) gotPhone = p.value; } catch {}
+      if (gotAdmin) setAdminPw(gotAdmin);
+      if (gotStaff) setStaffPw(gotStaff);
+      if (gotPhone) setOwnerPhone(gotPhone);
+      try { const t = await window.storage.get(TX_KEY, true); if (t) setTransactions(JSON.parse(t.value)); } catch {}
+      try { const s = await window.storage.get(SUPPLIER_KEY, true); if (s) setSuppliers(JSON.parse(s.value)); } catch {}
+      try { const f = await window.storage.get(FLOAT_KEY, true); if (f) setFloatEntries(JSON.parse(f.value)); } catch {}
+      try { const e = await window.storage.get(EXPENSE_KEY, true); if (e) setExpenses(JSON.parse(e.value)); } catch {}
+      try { const r = await window.storage.get(RATE_KEY, true); if (r) setDefaultRate(r.value); } catch {}
+      setLoaded(true);
+    })();
+  }, []);
+
+  async function reloadData() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try { const t = await window.storage.get(TX_KEY, true); if (t) setTransactions(JSON.parse(t.value)); } catch {}
+    try { const s = await window.storage.get(SUPPLIER_KEY, true); if (s) setSuppliers(JSON.parse(s.value)); } catch {}
+    try { const f = await window.storage.get(FLOAT_KEY, true); if (f) setFloatEntries(JSON.parse(f.value)); } catch {}
+    try { const e = await window.storage.get(EXPENSE_KEY, true); if (e) setExpenses(JSON.parse(e.value)); } catch {}
+    try { const r = await window.storage.get(RATE_KEY, true); if (r) setDefaultRate(r.value); } catch {}
+    setTimeout(() => setRefreshing(false), 600);
+  }
+
+  function persistWithRetry(key, value, attempt = 1) {
+    window.storage.set(key, value, true).catch(() => {
+      if (attempt < 5) setTimeout(() => persistWithRetry(key, value, attempt + 1), 1500 * attempt);
+    });
+  }
+
+  useEffect(() => {
+    if (loaded) persistWithRetry(TX_KEY, JSON.stringify(transactions));
+  }, [transactions, loaded]);
+
+  useEffect(() => {
+    if (loaded) persistWithRetry(SUPPLIER_KEY, JSON.stringify(suppliers));
+  }, [suppliers, loaded]);
+
+  useEffect(() => {
+    if (loaded) persistWithRetry(FLOAT_KEY, JSON.stringify(floatEntries));
+  }, [floatEntries, loaded]);
+
+  useEffect(() => {
+    if (loaded) persistWithRetry(EXPENSE_KEY, JSON.stringify(expenses));
+  }, [expenses, loaded]);
+
+  const [floatAmt, setFloatAmt] = useState("");
+  const [floatNote, setFloatNote] = useState("");
+  const [floatDate, setFloatDate] = useState(todayStr());
+  const [floatMethod, setFloatMethod] = useState("Cash");
+  const [showFloatForm, setShowFloatForm] = useState(false);
+  const [expAmt, setExpAmt] = useState("");
+  const [expCategory, setExpCategory] = useState("Motorbike Rent");
+  const [expDate, setExpDate] = useState(todayStr());
+  const [expLink, setExpLink] = useState("");
+  const [expNote, setExpNote] = useState("");
+  const [expError, setExpError] = useState("");
+  const [expFilterDate, setExpFilterDate] = useState(todayStr());
+  const [expSavedMsg, setExpSavedMsg] = useState(false);
+
+  function addFloatEntry() {
+    const amt = parseFloat(floatAmt);
+    if (isNaN(amt) || amt <= 0) { return; }
+    setFloatEntries(p => [{ id: Date.now(), date: floatDate || todayStr(), time: nowStr(), amount: amt, method: floatMethod, notes: floatNote, enteredBy: whoIs }, ...p]);
+    setFloatAmt(""); setFloatNote(""); setFloatDate(todayStr()); setFloatMethod("Cash"); setShowFloatForm(false);
+  }
+
+  function addExpense() {
+    const amt = parseFloat(expAmt);
+    if (isNaN(amt) || amt <= 0) { setExpError("⚠ Enter a valid amount."); return; }
+    setExpError("");
+    setExpenses(p => [{
+      id: Date.now(), date: expDate || todayStr(), time: nowStr(),
+      amount: amt, category: expCategory, deliveryRef: expLink, notes: expNote, enteredBy: whoIs,
+    }, ...p]);
+    setExpFilterDate(expDate || todayStr());
+    setExpAmt(""); setExpLink(""); setExpNote(""); setExpDate(todayStr());
+    setExpSavedMsg(true);
+    setTimeout(() => setExpSavedMsg(false), 2000);
+  }
+
+  function deleteExpense(id) { requestDelete(id, "expense"); }
+
+
+  function toggleDelivered(id) {
+    setTransactions(prev => prev.map(t => t.id === id ? { ...t, delivered: !t.delivered } : t));
+  }
+
+  // Auto-calc for sell form
+  useEffect(() => {
+    const thb = parseFloat(form.thbAmount) || 0;
+    const rate = parseFloat(form.rate) || 0;
+    const commission = parseFloat(form.commission) || 0;
+    const bdt = thb * rate;
+    const net = bdt - commission * rate;
+    setForm(f => ({ ...f, bdtAmount: thb && rate ? bdt.toFixed(2) : "", netBdt: thb && rate ? net.toFixed(2) : "" }));
+  }, [form.thbAmount, form.rate, form.commission]);
+
+  // Auto-calc for buy form
+  useEffect(() => {
+    const thb = parseFloat(buyForm.thbAmount) || 0;
+    const rate = parseFloat(buyForm.rate) || 0;
+    setBuyForm(f => ({ ...f, bdtCost: thb && rate ? (thb * rate).toFixed(2) : "" }));
+  }, [buyForm.thbAmount, buyForm.rate]);
+
+  // ─── auth handlers ───
+  async function handleSetup() {
+    const phone = suPhone.replace(/[^0-9+]/g, "");
+    if (phone.length < 6) { setPwError("Enter a valid owner mobile number (min 6 digits)."); return; }
+    if (suAdmin.length < 4) { setPwError("Owner password must be at least 4 characters."); return; }
+    if (suAdmin !== suAdmin2) { setPwError("Owner passwords do not match."); return; }
+    if (suStaff.length < 4) { setPwError("Staff password must be at least 4 characters."); return; }
+    if (suStaff !== suStaff2) { setPwError("Staff passwords do not match."); return; }
+    if (suAdmin === suStaff) { setPwError("Owner and Staff passwords must be different."); return; }
+    // Enter the app immediately; save in background with retries
+    setAdminPw(suAdmin); setStaffPw(suStaff); setOwnerPhone(phone);
+    setRole("admin"); setScreen("app"); setView("dashboard"); setPwError("");
+    const trySave = async (attempt = 1) => {
+      try {
+        await window.storage.set(ADMIN_PW_KEY, suAdmin, true);
+        await window.storage.set(STAFF_PW_KEY, suStaff, true);
+        await window.storage.set(OWNER_PHONE_KEY, phone, true);
+      } catch {
+        if (attempt < 5) setTimeout(() => trySave(attempt + 1), 1500 * attempt);
+      }
+    };
+    trySave();
+  }
+
+  function handleLogin() {
+    if (loginAs === "admin" && pwInput === adminPw) {
+      setRole("admin"); setScreen("app"); setView("dashboard"); setPwInput(""); setPwError("");
+    } else if (loginAs === "staff" && pwInput === staffPw) {
+      if (!staffName.trim()) { setPwError("Enter your name so the owner knows who made each entry."); return; }
+      setRole("staff"); setScreen("app"); setView("dashboard"); setPwInput(""); setPwError("");
+    } else {
+      setPwError("Wrong password."); setPwInput("");
+    }
+  }
+
+  const whoIs = role === "admin" ? "Owner" : (staffName.trim() || "Staff");
+
+  function logout() { setRole(null); setScreen("login"); setView("dashboard"); setForgotMode(false); setForgotVerified(false); }
+
+  function verifyForgotPhone() {
+    const entered = forgotPhone.replace(/[^0-9+]/g, "");
+    const savedP = (ownerPhone || "").replace(/[^0-9+]/g, "");
+    // Compare last 8 digits so +88 country code differences do not block the owner
+    const a = entered.replace(/\D/g, "").slice(-8);
+    const b = savedP.replace(/\D/g, "").slice(-8);
+    if (a.length >= 6 && a === b) { setForgotVerified(true); setPwError(""); }
+    else { setPwError("Mobile number does not match the owner number registered at setup."); }
+  }
+
+  function doPasswordReset() {
+    if (resetPw.length < 4) { setPwError("New password must be at least 4 characters."); return; }
+    if (resetPw !== resetPw2) { setPwError("Passwords do not match."); return; }
+    setAdminPw(resetPw);
+    persistWithRetry(ADMIN_PW_KEY, resetPw);
+    setForgotMode(false); setForgotVerified(false); setForgotPhone(""); setResetPw(""); setResetPw2("");
+    setPwError(""); setLoginAs("admin");
+  }
+
+  function handleChangePasswords() {
+    setPwMsg("");
+    if (pwCurrent !== adminPw) { setPwMsg("❌ Wrong current owner password."); return; }
+    if (!pwNew || pwNew.length < 4) { setPwMsg("❌ New password must be at least 4 characters."); return; }
+    if (pwNew !== pwNew2) { setPwMsg("❌ New passwords do not match."); return; }
+    const key = pwTarget === "owner" ? ADMIN_PW_KEY : STAFF_PW_KEY;
+    if (pwTarget === "owner") setAdminPw(pwNew); else setStaffPw(pwNew);
+    persistWithRetry(key, pwNew);
+    setPwMsg("✅ Password changed!");
+    setPwCurrent(""); setPwNew(""); setPwNew2("");
+  }
+
+  // ─── data handlers ───
+  function handleSaveSell() {
+    if (!form.customerName || !form.thbAmount) { setFormError("⚠ Please fill Customer Name and THB Amount."); return; }
+    const useRate = isAdmin ? (parseFloat(form.rate) || parseFloat(defaultRate) || 0) : (editingId ? (parseFloat(form.rate) || 0) : 0);
+    if (isAdmin && !editingId && !useRate) { setFormError("⚠ Please enter a rate."); return; }
+    setFormError("");
+    const thb = parseFloat(form.thbAmount);
+    const bdt = thb * useRate;
+    const comm = parseFloat(form.commission) || 0;
+    const net = bdt - comm * useRate;
+    const tx = {
+      id: Date.now(), kind: "SELL", date: form.deliveryDate || todayStr(), time: nowStr(), enteredBy: whoIs,
+      customerName: form.customerName,
+      customerPhone: form.customerPhone,
+      assignedTo: form.assignedTo || "",
+      delivered: false,
+      thbAmount: thb, rate: useRate,
+      bdtAmount: bdt,
+      commission: comm,
+      netBdt: net,
+      paymentMethod: form.paymentMethod,
+      amountPaid: parseFloat(form.amountPaid) || 0,
+      balanceDue: net - (parseFloat(form.amountPaid) || 0),
+      notes: form.notes,
+    };
+    if (editingId) {
+      setTransactions(p => p.map(t => t.id === editingId
+        ? { ...t, ...tx, id: t.id, date: form.deliveryDate || t.date, time: t.time, enteredBy: t.enteredBy, delivered: t.delivered }
+        : t));
+      setEditingId(null);
+    } else {
+      setTransactions(p => [tx, ...p]);
+    }
+    setForm({ ...initialForm, rate: form.rate });
+    setSaved(true);
+    setTimeout(() => { setSaved(false); setView(editingId ? "history" : "dashboard"); }, 1100);
+  }
+
+  function handleSaveBuy() {
+    if (!buyForm.supplierName || !buyForm.thbAmount || !buyForm.rate) { setBuyError("⚠ Please fill Supplier Name, THB Amount, and Rate."); return; }
+    setBuyError("");
+    const firstPaid = parseFloat(buyForm.amountPaid) || 0;
+    const cost = parseFloat(buyForm.bdtCost) || 0;
+    const payments = firstPaid > 0
+      ? [{ date: buyForm.paymentDate || todayStr(), amount: firstPaid, method: buyForm.paymentMethod }]
+      : [];
+    // Auto-apply advance from a previous entry
+    let appliedAdvance = 0;
+    if (buyForm.advanceFrom && buyForm.advanceAmt > 0) {
+      appliedAdvance = Math.min(buyForm.advanceAmt, Math.max(cost - firstPaid, 0));
+      if (appliedAdvance > 0) {
+        payments.push({ date: todayStr(), amount: appliedAdvance, method: "Advance applied" });
+        setSuppliers(prev => prev.map(s => {
+          if (s.id !== buyForm.advanceFrom) return s;
+          const pays = [...(s.payments || []), { date: todayStr(), amount: -appliedAdvance, method: "Advance → new buy" }];
+          const paid = pays.reduce((sum, p) => sum + p.amount, 0);
+          return { ...s, payments: pays, amountPaid: paid, balanceDue: s.bdtCost - paid };
+        }));
+      }
+    }
+    const b = {
+      id: Date.now(), date: todayStr(), time: nowStr(),
+      supplierName: buyForm.supplierName, supplierContact: buyForm.supplierContact,
+      thbAmount: parseFloat(buyForm.thbAmount), rate: parseFloat(buyForm.rate),
+      bdtCost: cost,
+      payments,
+      amountPaid: firstPaid + appliedAdvance,
+      balanceDue: cost - firstPaid - appliedAdvance,
+      notes: buyForm.notes,
+    };
+    setSuppliers(p => [b, ...p]);
+    setBuyForm({ ...initialBuyForm });
+    setSaved(true);
+    setTimeout(() => { setSaved(false); setView("supplier"); }, 1100);
+  }
+
+  const [payingSupplierId, setPayingSupplierId] = useState(null);
+  const [supPayAmt, setSupPayAmt] = useState("");
+  const [supPayDate, setSupPayDate] = useState(todayStr());
+  const [supPayMethod, setSupPayMethod] = useState("Cash");
+  const [rateEditing, setRateEditing] = useState(false);
+  const [rateInput, setRateInput] = useState("");
+  const [formError, setFormError] = useState("");
+  const [buyError, setBuyError] = useState("");
+  const [confirmDelId, setConfirmDelId] = useState(null);
+  const [editingId, setEditingId] = useState(null);
+  const [pwTarget, setPwTarget] = useState("staff");
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwNew2, setPwNew2] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
+  const [backupText, setBackupText] = useState("");
+  const [restoreText, setRestoreText] = useState("");
+  const [backupMsg, setBackupMsg] = useState("");
+
+  function addSupplierPayment(id) {
+    const amt = parseFloat(supPayAmt);
+    if (isNaN(amt) || amt <= 0) return;
+    setSuppliers(prev => prev.map(s => {
+      if (s.id !== id) return s;
+      const payments = [...(s.payments || []), { date: supPayDate || todayStr(), amount: amt, method: supPayMethod }];
+      const paid = payments.reduce((sum, p) => sum + p.amount, 0);
+      return { ...s, payments, amountPaid: paid, balanceDue: s.bdtCost - paid };
+    }));
+    setPayingSupplierId(null); setSupPayAmt(""); setSupPayDate(todayStr()); setSupPayMethod("Cash");
+  }
+
+  function makeBackup() {
+    const data = {
+      version: 1, exportedAt: new Date().toISOString(),
+      transactions, suppliers, floatEntries, expenses, defaultRate,
+    };
+    setBackupText(JSON.stringify(data));
+    setBackupMsg("✅ Backup created below — long-press the text, Select All, Copy, and save it in WhatsApp (message to yourself) or Notes.");
+  }
+
+  function restoreBackup() {
+    try {
+      const data = JSON.parse(restoreText.trim());
+      if (!data || !Array.isArray(data.transactions)) { setBackupMsg("❌ That text is not a valid backup."); return; }
+      setTransactions(data.transactions || []);
+      setSuppliers(data.suppliers || []);
+      setFloatEntries(data.floatEntries || []);
+      setExpenses(data.expenses || []);
+      if (data.defaultRate) { setDefaultRate(String(data.defaultRate)); persistWithRetry(RATE_KEY, String(data.defaultRate)); }
+      setRestoreText("");
+      setBackupMsg(`✅ Restored! ${ (data.transactions||[]).length } deliveries, ${ (data.suppliers||[]).length } buys, ${ (data.expenses||[]).length } expenses.`);
+    } catch {
+      setBackupMsg("❌ Could not read that backup text. Paste the full text exactly as copied.");
+    }
+  }
+
+  // Two-tap delete: first tap arms, second tap (within same render state) deletes
+  function requestDelete(id, kind) {
+    if (confirmDelId === id) {
+      if (kind === "sell") setTransactions(p => p.filter(t => t.id !== id));
+      if (kind === "buy") setSuppliers(p => p.filter(t => t.id !== id));
+      if (kind === "float") setFloatEntries(p => p.filter(f => f.id !== id));
+      if (kind === "expense") setExpenses(p => p.filter(x => x.id !== id));
+      setConfirmDelId(null);
+    } else {
+      setConfirmDelId(id);
+      setTimeout(() => setConfirmDelId(cur => (cur === id ? null : cur)), 3000);
+    }
+  }
+  function startEditSell(tx) {
+    setForm({
+      customerName: tx.customerName || "",
+      customerPhone: tx.customerPhone || "",
+      deliveryDate: tx.date || todayStr(),
+      assignedTo: tx.assignedTo || "",
+      thbAmount: String(tx.thbAmount ?? ""),
+      rate: tx.rate ? String(tx.rate) : "",
+      bdtAmount: "", commission: String(tx.commission || ""),
+      netBdt: "", paymentMethod: tx.paymentMethod || "Cash",
+      amountPaid: String(tx.amountPaid || ""),
+      notes: tx.notes || "",
+    });
+    setEditingId(tx.id);
+    setFormError(""); setSaved(false);
+    setView("entry");
+  }
+
+  function useAdvanceForNewBuy(b) {
+    setBuyForm({
+      ...initialBuyForm,
+      supplierName: b.supplierName,
+      supplierContact: b.supplierContact || "",
+      advanceFrom: b.id,
+      advanceAmt: Math.abs(b.balanceDue),
+      notes: `Using advance from ${b.date}`,
+    });
+    setSaved(false); setBuyError("");
+    setView("buy");
+  }
+
+  function deleteSell(id) { requestDelete(id, "sell"); }
+  function deleteBuy(id) { requestDelete(id, "buy"); }
+  function deleteFloatEntryTap(id) { requestDelete(id, "float"); }
+
+  // ─── derived data ───
+  const isAdmin = role === "admin";
+  const sells = transactions.filter(t => t.kind === "SELL" || !t.kind);
+  // PRIVACY: staff see ONLY their own entries; owner sees everything
+  const visSells = isAdmin ? sells : sells.filter(t => (t.enteredBy || "") === whoIs || (t.assignedTo || "") === whoIs);
+  const visFloat = isAdmin ? floatEntries : floatEntries.filter(f => (f.enteredBy || "") === whoIs);
+  const visExpenses = isAdmin ? expenses : expenses.filter(x => (x.enteredBy || "") === whoIs);
+  const todaySells = visSells.filter(t => t.date === todayStr());
+  const filteredSells = sells.filter(t => t.date === filterDate);
+  const weekAgo = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
+  const rangeSells = histMode === "day" ? visSells.filter(t => t.date === todayStr())
+    : histMode === "week" ? visSells.filter(t => t.date >= weekAgo)
+    : visSells.filter(t => t.date.slice(0, 7) === curMonth2());
+  function curMonth2() { return todayStr().slice(0, 7); }
+  const rangeDates = [...new Set(rangeSells.map(t => t.date))].sort().reverse();
+  const dueSells = sells.filter(t => t.balanceDue > 0.01);
+
+  const todayTHBSold = todaySells.reduce((s, t) => s + t.thbAmount, 0);
+  const todayBDTSent = todaySells.reduce((s, t) => s + (t.netBdt || t.bdtAmount || 0), 0);
+  const todayDue = todaySells.reduce((s, t) => s + t.balanceDue, 0);
+  const totalDue = dueSells.reduce((s, t) => s + t.balanceDue, 0);
+
+  // Staff THB float: received from boss − sold to customers
+  const totalFloatReceived = visFloat.reduce((s, f) => s + f.amount, 0);
+  const allTHBSold = isAdmin
+    ? visSells.reduce((s, t) => s + t.thbAmount, 0)
+    : visSells.filter(t => (t.enteredBy || "") === whoIs || t.delivered).reduce((s, t) => s + t.thbAmount, 0);
+  const assignedPending = isAdmin
+    ? sells.filter(t => t.assignedTo && !t.delivered)
+    : visSells.filter(t => (t.assignedTo || "") === whoIs && (t.enteredBy || "") !== whoIs && !t.delivered);
+  const floatBalance = totalFloatReceived - allTHBSold;
+  const todayFloatReceived = visFloat.filter(f => f.date === todayStr()).reduce((s, f) => s + f.amount, 0);
+  const undelivered = visSells.filter(t => !t.delivered);
+  const pendingPricing = sells.filter(t => !t.rate || t.rate === 0);
+
+  const curMonth = todayStr().slice(0, 7);
+  const todayExpenses = visExpenses.filter(x => x.date === todayStr());
+  const monthExpenses = visExpenses.filter(x => x.date.slice(0, 7) === curMonth);
+  const todayExpTotal = todayExpenses.reduce((s, x) => s + x.amount, 0);
+  const monthExpTotal = monthExpenses.reduce((s, x) => s + x.amount, 0);
+  const filteredExpenses = visExpenses.filter(x => x.date === expFilterDate);
+  const monthSells = visSells.filter(t => t.date.slice(0, 7) === curMonth);
+  const monthTHBDelivered = monthSells.reduce((s, t) => s + t.thbAmount, 0);
+  const monthBDTSent = monthSells.reduce((s, t) => s + (t.netBdt || t.bdtAmount || 0), 0);
+
+  // Saved contacts built automatically from history
+  const savedCustomers = [];
+  const seenCust = new Set();
+  for (const t of visSells) {
+    const key = (t.customerName || "").trim().toLowerCase();
+    if (key && !seenCust.has(key)) { seenCust.add(key); savedCustomers.push({ name: t.customerName, phone: t.customerPhone || "" }); }
+  }
+  const knownStaff = [...new Set([
+    ...sells.map(t => t.enteredBy), ...sells.map(t => t.assignedTo),
+    ...floatEntries.map(f => f.enteredBy), ...expenses.map(x => x.enteredBy),
+  ].filter(n => n && n !== "Owner" && n !== "admin" && n !== "staff"))];
+
+  const savedSuppliers = [];
+  const seenSup = new Set();
+  for (const b of suppliers) {
+    const key = (b.supplierName || "").trim().toLowerCase();
+    if (key && !seenSup.has(key)) { seenSup.add(key); savedSuppliers.push({ name: b.supplierName, contact: b.supplierContact || "" }); }
+  }
+
+  // Admin-only figures
+  const todayBuys = suppliers.filter(b => b.date === todayStr());
+  const todayTHBBought = todayBuys.reduce((s, b) => s + b.thbAmount, 0);
+  const todayBuyCost = todayBuys.reduce((s, b) => s + b.bdtCost, 0);
+  const supplierDue = suppliers.filter(b => b.balanceDue > 0.01);
+  const totalSupplierDue = supplierDue.reduce((s, b) => s + b.balanceDue, 0);
+  const supplierAdvance = suppliers.filter(b => b.balanceDue < -0.01);
+  const totalSupplierAdvance = supplierAdvance.reduce((s, b) => s + Math.abs(b.balanceDue), 0);
+  const totalTHBBought = suppliers.reduce((s, b) => s + b.thbAmount, 0);
+  const totalTHBSold = sells.reduce((s, t) => s + t.thbAmount, 0);
+  const thbStock = totalTHBBought - totalTHBSold;
+  const avgBuyRate = totalTHBBought > 0 ? suppliers.reduce((s, b) => s + b.bdtCost, 0) / totalTHBBought : 0;
+  const todayCommission = todaySells.reduce((s, t) => s + (t.commission || 0), 0);
+  const todaySellRevenue = todaySells.reduce((s, t) => s + (t.bdtAmount || 0), 0);
+  // Gross Profit per transaction = (Selling Rate − Avg Buying Rate) × THB Quantity
+  // Expenses are NOT deducted per transaction — only monthly: Net = Month Gross − Month Expenses
+  function txGross(t) {
+    return (t.rate > 0 && avgBuyRate > 0) ? (t.rate - avgBuyRate) * t.thbAmount : null;
+  }
+  const todayGross = avgBuyRate > 0
+    ? todaySells.filter(t => t.rate > 0).reduce((s, t) => s + txGross(t), 0)
+    : null;
+  const monthGross = avgBuyRate > 0
+    ? monthSells.filter(t => t.rate > 0).reduce((s, t) => s + txGross(t), 0)
+    : null;
+  const monthExpBDT = monthExpTotal * (avgBuyRate || 0);
+  const monthNet = monthGross === null ? null : monthGross - monthExpBDT;
+
+  // ─── styles ───
+  const S = {
+    app: { fontFamily: "'Segoe UI', system-ui, sans-serif", background: "#0f1923", minHeight: "100vh", color: "#e8edf2", maxWidth: wide ? 1100 : 480, margin: "0 auto", paddingBottom: wide ? 30 : 80 },
+    topBar: { background: "linear-gradient(135deg,#1a3a5c,#0f2540)", padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", borderBottom: "1px solid #1e3a5f", flexWrap: "wrap", gap: 8 },
+    logo: { fontSize: 18, fontWeight: 800, color: "#4fc3f7" },
+    sublogo: { fontSize: 10, color: "#7fa8c9", marginTop: 1 },
+    roleBadge: { fontSize: 10, fontWeight: 800, padding: "3px 10px", borderRadius: 6, background: isAdmin ? "#3d2c00" : "#0d3320", color: isAdmin ? "#ffb74d" : "#81c784", border: `1px solid ${isAdmin ? "#ffb74d55" : "#81c78455"}`, letterSpacing: 1 },
+    badge: { background: "#1a3a5c", border: "1px solid #2d6a9f", borderRadius: 8, padding: "5px 10px", fontSize: 12, color: "#4fc3f7", cursor: "pointer", whiteSpace: "nowrap" },
+    // desktop tabs / mobile bottom nav
+    deskNav: { display: "flex", gap: 4, background: "#0d1e2e", padding: "8px 14px", borderBottom: "1px solid #1e3a5f", flexWrap: "wrap" },
+    deskBtn: (a) => ({ padding: "8px 16px", borderRadius: 8, border: "none", background: a ? "#1a3a5c" : "transparent", color: a ? "#4fc3f7" : "#5a8aaa", fontWeight: a ? 700 : 400, fontSize: 13, cursor: "pointer" }),
+    nav: { position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, background: "#0d1e2e", borderTop: "1px solid #1e3a5f", display: "flex", zIndex: 99 },
+    navBtn: (a) => ({ flex: 1, padding: "9px 2px 7px", background: "none", border: "none", color: a ? "#4fc3f7" : "#4a6a85", cursor: "pointer", fontSize: 9, display: "flex", flexDirection: "column", alignItems: "center", gap: 2, fontWeight: a ? 700 : 400, borderTop: a ? "2px solid #4fc3f7" : "2px solid transparent" }),
+    body: wide ? { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, alignItems: "start" } : {},
+    card: { background: "#132030", borderRadius: 14, padding: 16, margin: "12px 14px 0" },
+    cardTitle: { fontSize: 11, color: "#5a8aaa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 10 },
+    statGrid: { display: "grid", gridTemplateColumns: wide ? "repeat(4,1fr)" : "1fr 1fr", gap: 10 },
+    stat: (c, clickable) => ({ background: "#0f1923", borderRadius: 10, padding: "12px 14px", borderLeft: `3px solid ${c}`, cursor: clickable ? "pointer" : "default" }),
+    statLabel: { fontSize: 10, color: "#5a8aaa", marginBottom: 4 },
+    statVal: { fontSize: 18, fontWeight: 800 },
+    statCur: { fontSize: 10, color: "#7fa8c9", marginTop: 2 },
+    section: { margin: "12px 14px 0" },
+    sectionTitle: { fontSize: 11, color: "#5a8aaa", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 },
+    label: { fontSize: 11, color: "#7fa8c9", marginBottom: 4, display: "block" },
+    input: { width: "100%", background: "#0f1923", border: "1px solid #1e3a5f", borderRadius: 8, padding: "11px 12px", color: "#e8edf2", fontSize: 15, boxSizing: "border-box", outline: "none" },
+    calc: { width: "100%", background: "#091524", border: "1px solid #1e3a5f", borderRadius: 8, padding: "11px 12px", color: "#4fc3f7", fontSize: 15, boxSizing: "border-box" },
+    row2: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 },
+    payRow: { display: "flex", gap: 6, flexWrap: "wrap" },
+    payBtn: (a) => ({ padding: "8px 14px", borderRadius: 8, border: `1px solid ${a ? "#4fc3f7" : "#1e3a5f"}`, background: a ? "#1a3a5c" : "#0f1923", color: a ? "#4fc3f7" : "#5a8aaa", fontSize: 13, cursor: "pointer", fontWeight: a ? 700 : 400 }),
+    saveBtn: (color = "linear-gradient(135deg,#1565c0,#0d47a1)") => ({ width: "calc(100% - 28px)", margin: "16px 14px 0", padding: "15px 0", borderRadius: 12, border: "none", background: color, color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer" }),
+    success: { textAlign: "center", padding: "20px 0", color: "#4caf50", fontWeight: 700, fontSize: 16 },
+    txCard: (c) => ({ background: "#132030", borderRadius: 12, padding: 14, margin: "10px 14px 0", borderLeft: `3px solid ${c}` }),
+    txType: (bg, fg) => ({ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 5, background: bg, color: fg }),
+    noData: { textAlign: "center", padding: "40px 20px", color: "#4a6a85", fontSize: 14 },
+    dateBar: { background: "#132030", margin: "12px 14px 0", borderRadius: 10, padding: "10px 14px", display: "flex", alignItems: "center", gap: 10 },
+    delBtn: { background: "none", border: "none", color: "#f44336", cursor: "pointer", fontSize: 16 },
+    // tables (desktop)
+    table: { width: "100%", borderCollapse: "collapse", fontSize: 13 },
+    th: { textAlign: "left", padding: "8px 10px", color: "#5a8aaa", fontSize: 11, textTransform: "uppercase", borderBottom: "1px solid #1e3a5f", whiteSpace: "nowrap" },
+    td: { padding: "8px 10px", borderBottom: "1px solid #16283a", whiteSpace: "nowrap" },
+  };
+
+  const lockS = {
+    wrap: { fontFamily: "'Segoe UI', system-ui, sans-serif", background: "#0f1923", minHeight: "100vh", color: "#e8edf2", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, boxSizing: "border-box" },
+    box: { width: "100%", maxWidth: 340, display: "flex", flexDirection: "column", alignItems: "center" },
+    icon: { fontSize: 48, marginBottom: 10 },
+    title: { fontSize: 20, fontWeight: 800, color: "#4fc3f7", marginBottom: 4, textAlign: "center" },
+    sub: { fontSize: 13, color: "#7fa8c9", marginBottom: 22, textAlign: "center" },
+    input: { width: "100%", background: "#132030", border: "1px solid #1e3a5f", borderRadius: 10, padding: "13px 15px", color: "#e8edf2", fontSize: 16, boxSizing: "border-box", outline: "none", marginBottom: 10 },
+    btn: { width: "100%", padding: "14px 0", borderRadius: 10, border: "none", background: "linear-gradient(135deg,#1565c0,#0d47a1)", color: "#fff", fontWeight: 800, fontSize: 16, cursor: "pointer", marginTop: 4 },
+    err: { color: "#f44336", fontSize: 13, fontWeight: 600, minHeight: 18, marginBottom: 4 },
+    note: { fontSize: 11, color: "#4a6a85", marginTop: 18, textAlign: "center" },
+    roleTab: (a, c) => ({ flex: 1, padding: "11px 0", borderRadius: 10, border: `2px solid ${a ? c : "#1e3a5f"}`, background: a ? c + "22" : "#0f1923", color: a ? c : "#5a8aaa", fontWeight: 700, fontSize: 14, cursor: "pointer" }),
+    divider: { width: "100%", borderTop: "1px solid #1e3a5f", margin: "16px 0 14px", position: "relative" },
+  };
+
+  // ─── screens ───
+  if (!loaded) {
+    return <div style={lockS.wrap}><div style={lockS.icon}>💱</div><div style={{ color: "#5a8aaa" }}>Loading...</div></div>;
+  }
+
+  // First-time setup (no passwords saved yet)
+  if (!adminPw || !staffPw) {
+    return (
+      <div style={lockS.wrap}>
+        <div style={lockS.box}>
+          <div style={lockS.icon}>🔐</div>
+          <div style={lockS.title}>First-Time Setup</div>
+          <div style={lockS.sub}>Create two passwords:<br /><b style={{ color: "#ffb74d" }}>Owner</b> = full access (you)<br /><b style={{ color: "#81c784" }}>Staff</b> = sell entries only</div>
+          <div style={{ width: "100%", fontSize: 12, color: "#4fc3f7", fontWeight: 700, marginBottom: 6 }}>📱 OWNER MOBILE NUMBER (for password recovery)</div>
+          <input style={lockS.input} type="tel" inputMode="tel" placeholder="e.g. +880 1712 345678" value={suPhone} onChange={e => { setSuPhone(e.target.value); setPwError(""); }} />
+          <div style={{ width: "100%", fontSize: 12, color: "#ffb74d", fontWeight: 700, marginBottom: 6 }}>👑 OWNER PASSWORD</div>
+          <input style={lockS.input} type="password" placeholder="Owner password" value={suAdmin} onChange={e => { setSuAdmin(e.target.value); setPwError(""); }} />
+          <input style={lockS.input} type="password" placeholder="Confirm owner password" value={suAdmin2} onChange={e => { setSuAdmin2(e.target.value); setPwError(""); }} />
+          <div style={{ width: "100%", fontSize: 12, color: "#81c784", fontWeight: 700, margin: "8px 0 6px" }}>👤 STAFF PASSWORD</div>
+          <input style={lockS.input} type="password" placeholder="Staff password" value={suStaff} onChange={e => { setSuStaff(e.target.value); setPwError(""); }} />
+          <input style={lockS.input} type="password" placeholder="Confirm staff password" value={suStaff2} onChange={e => { setSuStaff2(e.target.value); setPwError(""); }} onKeyDown={e => e.key === "Enter" && handleSetup()} />
+          <div style={lockS.err}>{pwError}</div>
+          <button style={lockS.btn} onClick={handleSetup}>Create & Enter as Owner 🔒</button>
+          <div style={lockS.note}>Give ONLY the staff password to your staff. Keep the owner password secret — it unlocks buy records, suppliers, and profit.</div>
+        </div>
+      </div>
+    );
+  }
+
+  // Login
+  if (screen !== "app" || !role) {
+    return (
+      <div style={lockS.wrap}>
+        <div style={lockS.box}>
+          <div style={lockS.icon}>🔒</div>
+          <div style={lockS.title}>💱 Exchange Tracker</div>
+          <div style={lockS.sub}>Who is logging in?</div>
+          <div style={{ display: "flex", gap: 8, width: "100%", marginBottom: 14 }}>
+            <button style={lockS.roleTab(loginAs === "staff", "#81c784")} onClick={() => { setLoginAs("staff"); setPwError(""); }}>👤 Staff</button>
+            <button style={lockS.roleTab(loginAs === "admin", "#ffb74d")} onClick={() => { setLoginAs("admin"); setPwError(""); }}>👑 Owner</button>
+          </div>
+          {!forgotMode && (
+            <>
+              {loginAs === "staff" && (
+                <input style={lockS.input} type="text" placeholder="Your name (e.g. Sumon)" value={staffName}
+                  onChange={e => { setStaffName(e.target.value); setPwError(""); }} />
+              )}
+              <input style={lockS.input} type="password" placeholder={loginAs === "admin" ? "Owner password" : "Staff password"} value={pwInput} autoFocus
+                onChange={e => { setPwInput(e.target.value); setPwError(""); }} onKeyDown={e => e.key === "Enter" && handleLogin()} />
+              <div style={lockS.err}>{pwError}</div>
+              <button style={lockS.btn} onClick={handleLogin}>Unlock 🔓</button>
+              <button style={{ background: "none", border: "none", color: "#4fc3f7", fontSize: 13, marginTop: 14, cursor: "pointer", textDecoration: "underline" }}
+                onClick={() => { setForgotMode(true); setPwError(""); setForgotPhone(""); setForgotVerified(false); }}>Forgot password?</button>
+            </>
+          )}
+          {forgotMode && !forgotVerified && (
+            <>
+              <div style={{ fontSize: 13, color: "#7fa8c9", marginBottom: 10, textAlign: "center" }}>🔐 Owner verification<br />Enter the owner mobile number registered at setup:</div>
+              <input style={lockS.input} type="tel" inputMode="tel" placeholder="Owner mobile number" value={forgotPhone} autoFocus
+                onChange={e => { setForgotPhone(e.target.value); setPwError(""); }} onKeyDown={e => e.key === "Enter" && verifyForgotPhone()} />
+              <div style={lockS.err}>{pwError}</div>
+              <button style={lockS.btn} onClick={verifyForgotPhone}>Verify Number ✓</button>
+              <button style={{ background: "none", border: "none", color: "#5a8aaa", fontSize: 13, marginTop: 12, cursor: "pointer" }}
+                onClick={() => { setForgotMode(false); setPwError(""); }}>← Back to login</button>
+            </>
+          )}
+          {forgotMode && forgotVerified && (
+            <>
+              <div style={{ fontSize: 13, color: "#4caf50", marginBottom: 10, textAlign: "center", fontWeight: 700 }}>✅ Number verified!<br /><span style={{ color: "#7fa8c9", fontWeight: 400 }}>Set a new OWNER password:</span></div>
+              <input style={lockS.input} type="password" placeholder="New owner password" value={resetPw} autoFocus
+                onChange={e => { setResetPw(e.target.value); setPwError(""); }} />
+              <input style={lockS.input} type="password" placeholder="Confirm new password" value={resetPw2}
+                onChange={e => { setResetPw2(e.target.value); setPwError(""); }} onKeyDown={e => e.key === "Enter" && doPasswordReset()} />
+              <div style={lockS.err}>{pwError}</div>
+              <button style={lockS.btn} onClick={doPasswordReset}>Reset Password ✓</button>
+            </>
+          )}
+          <div style={lockS.note}>{loginAs === "staff" ? "Staff can add sell entries and see customer dues." : "Owner sees everything: buys, suppliers, stock & profit."}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── nav items by role ───
+  const navItems = isAdmin
+    ? [
+        { key: "dashboard", icon: "🏠", label: "Home" },
+        { key: "entry", icon: "➕", label: "Sell" },
+        { key: "buy", icon: "📥", label: "Buy" },
+        { key: "supplier", icon: "🏦", label: "Suppliers" },
+        { key: "history", icon: "📋", label: "History" },
+        { key: "expenses", icon: "💸", label: "Expenses" },
+        { key: "dues", icon: "⚠️", label: `Dues${totalDue > 0 ? "🔴" : ""}` },
+      ]
+    : [
+        { key: "dashboard", icon: "🏠", label: "Home" },
+        { key: "entry", icon: "➕", label: "New Delivery" },
+        { key: "history", icon: "📋", label: "History" },
+        { key: "expenses", icon: "💸", label: "Expenses" },
+      ];
+
+  function goto(k) {
+    if (k === "entry") { setForm({ ...initialForm, rate: defaultRate }); setSaved(false); setFormError(""); setEditingId(null); }
+    if (k === "buy") { setBuyForm({ ...initialBuyForm }); setSaved(false); setBuyError(""); }
+    setView(k);
+  }
+
+  // ─── render pieces ───
+  const sellForm = saved && view === "entry" ? <div style={S.success}>✅ Saved!</div> : (
+    <>
+      <div style={S.section}>
+        <div style={S.sectionTitle}>{editingId ? "✏️ Edit Entry (Owner)" : isAdmin ? "📤 New Sell Entry" : "🚚 New Delivery Entry"}</div>
+        <label style={S.label}>Customer Name *</label>
+        <input style={S.input} placeholder="Enter name..." value={form.customerName} onChange={e => setForm(f => ({ ...f, customerName: e.target.value }))} />
+        {form.customerName.length > 0 && (() => {
+          const q = form.customerName.trim().toLowerCase();
+          const matches = savedCustomers.filter(cu => cu.name.toLowerCase().includes(q) && cu.name.toLowerCase() !== q).slice(0, 5);
+          return matches.length > 0 ? (
+            <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {matches.map((cu, i) => (
+                <button key={i} style={{ ...S.payBtn(false), fontSize: 12 }}
+                  onClick={() => setForm(f => ({ ...f, customerName: cu.name, customerPhone: cu.phone }))}>
+                  👤 {cu.name}{cu.phone ? ` · ${cu.phone}` : ""}
+                </button>
+              ))}
+            </div>
+          ) : null;
+        })()}
+        <div style={{ marginTop: 10 }}>
+          <label style={S.label}>Customer Phone Number</label>
+          <input style={S.input} type="tel" inputMode="tel" placeholder="e.g. +880 1XXX-XXXXXX" value={form.customerPhone} onChange={e => setForm(f => ({ ...f, customerPhone: e.target.value }))} />
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <label style={S.label}>Delivery Date</label>
+          <DateField value={form.deliveryDate || todayStr()} onChange={v => setForm(f => ({ ...f, deliveryDate: v }))} />
+        </div>
+        {isAdmin && (
+          <div style={{ marginTop: 10 }}>
+            <label style={S.label}>📬 Assign delivery to staff (they will be notified)</label>
+            <input style={S.input} placeholder="Staff name — or leave empty" value={form.assignedTo} onChange={e => setForm(f => ({ ...f, assignedTo: e.target.value }))} />
+            {knownStaff.length > 0 && (
+              <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {knownStaff.map(n => (
+                  <button key={n} style={S.payBtn(form.assignedTo === n)} onClick={() => setForm(f => ({ ...f, assignedTo: f.assignedTo === n ? "" : n }))}>👤 {n}</button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      <div style={S.section}>
+        {isAdmin ? (
+          <div style={S.row2}>
+            <div>
+              <label style={S.label}>THB Amount *</label>
+              <input style={S.input} type="number" inputMode="decimal" placeholder="0.00" value={form.thbAmount} onChange={e => setForm(f => ({ ...f, thbAmount: e.target.value }))} />
+            </div>
+            <div>
+              <label style={S.label}>Rate (THB→BDT) *</label>
+              <input style={S.input} type="number" inputMode="decimal" placeholder={defaultRate || "3.2500"} value={form.rate} onChange={e => setForm(f => ({ ...f, rate: e.target.value }))} />
+            </div>
+          </div>
+        ) : (
+          <div>
+            <label style={S.label}>THB Amount Delivered to Customer *</label>
+            <input style={S.input} type="number" inputMode="decimal" placeholder="0.00" value={form.thbAmount} onChange={e => setForm(f => ({ ...f, thbAmount: e.target.value }))} />
+          </div>
+        )}
+        {isAdmin && (
+          <div style={{ marginTop: 10 }}>
+            <label style={S.label}>BDT Amount (auto)</label>
+            <div style={S.calc}>{form.bdtAmount ? formatNum(parseFloat(form.bdtAmount)) : "—"} BDT</div>
+          </div>
+        )}
+      </div>
+      {isAdmin && (
+      <div style={S.section}>
+        <div style={S.row2}>
+          <div>
+            <label style={S.label}>Commission (THB)</label>
+            <input style={S.input} type="number" inputMode="decimal" placeholder="0" value={form.commission} onChange={e => setForm(f => ({ ...f, commission: e.target.value }))} />
+          </div>
+          <div>
+            <label style={S.label}>Net BDT (auto)</label>
+            <div style={S.calc}>{form.netBdt ? formatNum(parseFloat(form.netBdt)) : "—"}</div>
+          </div>
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <label style={S.label}>Amount Paid by Customer (BDT)</label>
+          <input style={S.input} type="number" inputMode="decimal" placeholder="0.00" value={form.amountPaid} onChange={e => setForm(f => ({ ...f, amountPaid: e.target.value }))} />
+        </div>
+        {form.netBdt && (
+          <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 8, background: (parseFloat(form.netBdt) - parseFloat(form.amountPaid || 0)) > 0.01 ? "#1e0a0a" : "#0a1e0a", border: `1px solid ${(parseFloat(form.netBdt) - parseFloat(form.amountPaid || 0)) > 0.01 ? "#f44336" : "#4caf50"}` }}>
+            <span style={{ fontSize: 12, color: "#7fa8c9" }}>Remaining Balance: </span>
+            <span style={{ fontWeight: 800, fontSize: 16, color: (parseFloat(form.netBdt) - parseFloat(form.amountPaid || 0)) > 0.01 ? "#f44336" : "#4caf50" }}>
+              {formatNum(parseFloat(form.netBdt) - parseFloat(form.amountPaid || 0))} BDT
+            </span>
+          </div>
+        )}
+      </div>
+      )}
+      {isAdmin && (
+      <div style={S.section}>
+        <div style={S.sectionTitle}>Payment Method</div>
+        <div style={S.payRow}>
+          {["Cash", "Bank Transfer", "bKash", "Other"].map(m => (
+            <button key={m} style={S.payBtn(form.paymentMethod === m)} onClick={() => setForm(f => ({ ...f, paymentMethod: m }))}>{m}</button>
+          ))}
+        </div>
+      </div>
+      )}
+      <div style={S.section}>
+        <label style={S.label}>Notes (optional)</label>
+        <input style={S.input} placeholder="Any extra info..." value={form.notes} onChange={e => setForm(f => ({ ...f, notes: e.target.value }))} />
+      </div>
+      {formError && <div style={{ margin: "10px 14px 0", padding: "10px 12px", borderRadius: 8, background: "#1e0a0a", border: "1px solid #f44336", color: "#f44336", fontSize: 13, fontWeight: 600 }}>{formError}</div>}
+      <button style={S.saveBtn()} onClick={handleSaveSell}>{editingId ? "Update Entry ✓" : isAdmin ? "Save Sell Entry ✓" : "Save Delivery ✓"}</button>
+    </>
+  );
+
+  const buyFormUI = saved && view === "buy" ? <div style={S.success}>✅ Saved!</div> : (
+    <>
+      <div style={S.section}>
+        <div style={S.sectionTitle}>📥 New Buy Entry (Owner Only)</div>
+        {buyForm.advanceFrom && (
+          <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 8, background: "#0a1e0a", border: "1px solid #4caf50", fontSize: 13 }}>
+            💰 Advance of <b style={{ color: "#4caf50" }}>{formatNum(buyForm.advanceAmt)} BDT</b> will be automatically applied as payment when you save.
+          </div>
+        )}
+        <label style={S.label}>Supplier Name *</label>
+        <input style={S.input} placeholder="Who did you buy THB from..." value={buyForm.supplierName} onChange={e => setBuyForm(f => ({ ...f, supplierName: e.target.value }))} />
+        {buyForm.supplierName.length > 0 && (() => {
+          const q = buyForm.supplierName.trim().toLowerCase();
+          const matches = savedSuppliers.filter(su => su.name.toLowerCase().includes(q) && su.name.toLowerCase() !== q).slice(0, 5);
+          return matches.length > 0 ? (
+            <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {matches.map((su, i) => (
+                <button key={i} style={{ ...S.payBtn(false), fontSize: 12 }}
+                  onClick={() => setBuyForm(f => ({ ...f, supplierName: su.name, supplierContact: su.contact }))}>
+                  🏦 {su.name}{su.contact ? ` · ${su.contact}` : ""}
+                </button>
+              ))}
+            </div>
+          ) : null;
+        })()}
+        <div style={{ marginTop: 10 }}>
+          <label style={S.label}>Supplier Contact / Phone</label>
+          <input style={S.input} placeholder="Phone or details..." value={buyForm.supplierContact} onChange={e => setBuyForm(f => ({ ...f, supplierContact: e.target.value }))} />
+        </div>
+      </div>
+      <div style={S.section}>
+        <div style={S.row2}>
+          <div>
+            <label style={S.label}>THB Bought *</label>
+            <input style={S.input} type="number" inputMode="decimal" placeholder="0.00" value={buyForm.thbAmount} onChange={e => setBuyForm(f => ({ ...f, thbAmount: e.target.value }))} />
+          </div>
+          <div>
+            <label style={S.label}>Buy Rate (THB→BDT) *</label>
+            <input style={S.input} type="number" inputMode="decimal" placeholder="3.2000" value={buyForm.rate} onChange={e => setBuyForm(f => ({ ...f, rate: e.target.value }))} />
+          </div>
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <label style={S.label}>Total Cost in BDT (auto)</label>
+          <div style={S.calc}>{buyForm.bdtCost ? formatNum(parseFloat(buyForm.bdtCost)) : "—"} BDT</div>
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <label style={S.label}>First Payment to Supplier (BDT) — leave 0 if not paid yet</label>
+          <input style={S.input} type="number" inputMode="decimal" placeholder="0.00" value={buyForm.amountPaid} onChange={e => setBuyForm(f => ({ ...f, amountPaid: e.target.value }))} />
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <label style={S.label}>Payment Method</label>
+          <div style={S.payRow}>
+            {["Cash", "Bank Transfer", "Bank Deposit", "Other"].map(m => (
+              <button key={m} style={S.payBtn(buyForm.paymentMethod === m)} onClick={() => setBuyForm(f => ({ ...f, paymentMethod: m }))}>{m}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{ marginTop: 10 }}>
+          <label style={S.label}>Payment Date</label>
+          <DateField value={buyForm.paymentDate} onChange={v => setBuyForm(f => ({ ...f, paymentDate: v }))} />
+        </div>
+        {buyForm.bdtCost && (
+          <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 8, background: "#1e140a", border: "1px solid #ffb74d55" }}>
+            <span style={{ fontSize: 12, color: "#7fa8c9" }}>You still owe supplier: </span>
+            <span style={{ fontWeight: 800, fontSize: 16, color: "#ffb74d" }}>
+              {formatNum(parseFloat(buyForm.bdtCost) - parseFloat(buyForm.amountPaid || 0))} BDT
+            </span>
+          </div>
+        )}
+      </div>
+      <div style={S.section}>
+        <label style={S.label}>Notes (optional)</label>
+        <input style={S.input} placeholder="Any extra info..." value={buyForm.notes} onChange={e => setBuyForm(f => ({ ...f, notes: e.target.value }))} />
+      </div>
+      {buyError && <div style={{ margin: "10px 14px 0", padding: "10px 12px", borderRadius: 8, background: "#1e0a0a", border: "1px solid #f44336", color: "#f44336", fontSize: 13, fontWeight: 600 }}>{buyError}</div>}
+      <button style={S.saveBtn("linear-gradient(135deg,#e65100,#bf360c)")} onClick={handleSaveBuy}>Save Buy Entry ✓</button>
+    </>
+  );
+
+  return (
+    <div style={S.app}>
+      {/* TOP BAR */}
+      <div style={S.topBar}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={S.logo}>💱 Exchange Tracker</div>
+            <span style={S.roleBadge}>{isAdmin ? "👑 OWNER" : `👤 ${(staffName.trim() || "STAFF").toUpperCase()}`}</span>
+          </div>
+          <div style={S.sublogo}>THB ⇄ BDT • {new Date().toLocaleDateString("en-US", { weekday: "short", day: "numeric", month: "short" })}</div>
+        </div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {isAdmin && (
+            <div style={S.badge} onClick={() => { setRateEditing(v => !v); setRateInput(defaultRate); }}>{defaultRate ? `Rate: ${defaultRate}` : "Set Rate ▾"}</div>
+          )}
+          
+          {isAdmin && <div style={{ ...S.badge, padding: "5px 8px" }} title="Change passwords" onClick={() => { setView("settings"); setPwMsg(""); }}>🔑</div>}
+          <div style={{ ...S.badge, padding: "5px 8px", color: refreshing ? "#4caf50" : "#4fc3f7" }} title="Refresh data" onClick={reloadData}>{refreshing ? "✓" : "🔄"}</div>
+          <div style={{ ...S.badge, padding: "5px 8px", color: "#f44336", borderColor: "#f4433655" }} title="Log out" onClick={logout}>🚪 Exit</div>
+        </div>
+      </div>
+
+      {/* INLINE RATE EDITOR */}
+      {isAdmin && rateEditing && (
+        <div style={{ background: "#132030", borderBottom: "1px solid #1e3a5f", padding: "12px 18px" }}>
+          <label style={S.label}>Today's Rate (THB → BDT)</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input style={{ ...S.input, flex: 1 }} type="number" inputMode="decimal" placeholder="3.2500" value={rateInput} onChange={e => setRateInput(e.target.value)} autoFocus />
+            <button style={{ padding: "0 18px", borderRadius: 8, border: "none", background: "#1565c0", color: "#fff", fontWeight: 700, cursor: "pointer" }}
+              onClick={() => {
+                if (rateInput && !isNaN(rateInput) && parseFloat(rateInput) > 0) {
+                  setDefaultRate(rateInput);
+                  persistWithRetry(RATE_KEY, rateInput);
+                  setRateEditing(false);
+                }
+              }}>Save</button>
+            <button style={{ padding: "0 14px", borderRadius: 8, border: "1px solid #1e3a5f", background: "transparent", color: "#5a8aaa", cursor: "pointer" }}
+              onClick={() => setRateEditing(false)}>✕</button>
+          </div>
+        </div>
+      )}
+
+      {/* SETTINGS (owner) */}
+      {view === "settings" && isAdmin && (
+        <div style={{ maxWidth: 480, margin: "0 auto" }}>
+          <div style={S.card}>
+            <div style={S.cardTitle}>🔑 Change Password</div>
+            <label style={S.label}>Which password to change?</label>
+            <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+              <button style={S.payBtn(pwTarget === "staff")} onClick={() => setPwTarget("staff")}>👤 Staff</button>
+              <button style={S.payBtn(pwTarget === "owner")} onClick={() => setPwTarget("owner")}>👑 Owner</button>
+            </div>
+            <label style={S.label}>Current OWNER password *</label>
+            <input style={S.input} type="password" value={pwCurrent} onChange={e => { setPwCurrent(e.target.value); setPwMsg(""); }} />
+            <div style={{ marginTop: 8 }}>
+              <label style={S.label}>New {pwTarget} password (min 4 characters)</label>
+              <input style={S.input} type="password" value={pwNew} onChange={e => { setPwNew(e.target.value); setPwMsg(""); }} />
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <label style={S.label}>Confirm new password</label>
+              <input style={S.input} type="password" value={pwNew2} onChange={e => { setPwNew2(e.target.value); setPwMsg(""); }} />
+            </div>
+            {pwMsg && <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: pwMsg.startsWith("✅") ? "#4caf50" : "#f44336" }}>{pwMsg}</div>}
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button style={{ flex: 1, padding: "12px 0", borderRadius: 8, border: "none", background: "#1565c0", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }} onClick={handleChangePasswords}>Change Password ✓</button>
+              <button style={{ flex: 1, padding: "12px 0", borderRadius: 8, border: "1px solid #1e3a5f", background: "transparent", color: "#5a8aaa", fontSize: 14, cursor: "pointer" }} onClick={() => setView("dashboard")}>Back</button>
+            </div>
+          </div>
+          <div style={S.card}>
+            <div style={S.cardTitle}>📱 Recovery Mobile Number</div>
+            <div style={{ fontSize: 12, color: "#7fa8c9", marginBottom: 8 }}>Current: {ownerPhone || "not set"} — used to verify you if you forget the password.</div>
+            <label style={S.label}>New recovery number</label>
+            <input style={S.input} type="tel" inputMode="tel" placeholder="e.g. +880 1712 345678" value={suPhone} onChange={e => setSuPhone(e.target.value)} />
+            <button style={{ marginTop: 10, width: "100%", padding: "11px 0", borderRadius: 8, border: "none", background: "#1565c0", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+              onClick={() => {
+                const phone = suPhone.replace(/[^0-9+]/g, "");
+                if (phone.length >= 6) { setOwnerPhone(phone); persistWithRetry(OWNER_PHONE_KEY, phone); setSuPhone(""); setPwMsg("✅ Recovery number updated!"); }
+                else setPwMsg("❌ Enter a valid number (min 6 digits).");
+              }}>Update Number ✓</button>
+          </div>
+          <div style={S.card}>
+            <div style={S.cardTitle}>💾 Backup & Restore (protect your data)</div>
+            <div style={{ fontSize: 12, color: "#7fa8c9", marginBottom: 10 }}>Make a backup regularly (e.g. every evening). If the app is ever updated or reset, paste the backup here to bring all data back.</div>
+            <button style={{ width: "100%", padding: "12px 0", borderRadius: 8, border: "none", background: "#2e7d32", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+              onClick={makeBackup}>📤 Create Backup Text</button>
+            {backupText && (
+              <textarea readOnly value={backupText} onFocus={e => e.target.select()}
+                style={{ marginTop: 10, width: "100%", height: 90, background: "#0f1923", border: "1px solid #4caf50", borderRadius: 8, color: "#81c784", fontSize: 10, padding: 8, boxSizing: "border-box" }} />
+            )}
+            <div style={{ marginTop: 14 }}>
+              <label style={S.label}>Paste backup text here to restore:</label>
+              <textarea value={restoreText} onChange={e => setRestoreText(e.target.value)} placeholder='{"version":1,...}'
+                style={{ width: "100%", height: 70, background: "#0f1923", border: "1px solid #1e3a5f", borderRadius: 8, color: "#e8edf2", fontSize: 11, padding: 8, boxSizing: "border-box" }} />
+              <button style={{ marginTop: 8, width: "100%", padding: "12px 0", borderRadius: 8, border: "none", background: "#1565c0", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+                onClick={restoreBackup}>📥 Restore from Backup</button>
+            </div>
+            {backupMsg && <div style={{ marginTop: 10, fontSize: 12, fontWeight: 600, color: backupMsg.startsWith("✅") ? "#4caf50" : "#f44336" }}>{backupMsg}</div>}
+          </div>
+        </div>
+      )}
+
+      {/* DESKTOP NAV */}
+      {wide && (
+        <div style={S.deskNav}>
+          {navItems.map(n => (
+            <button key={n.key} style={S.deskBtn(view === n.key)} onClick={() => goto(n.key)}>{n.icon} {n.label}</button>
+          ))}
+        </div>
+      )}
+
+      {/* DASHBOARD */}
+      {view === "dashboard" && (
+        <div style={wide ? S.body : {}}>
+          <div>
+            <div style={S.card}>
+              <div style={S.cardTitle}>📅 Today's {isAdmin ? "Sales" : "Deliveries"}</div>
+              <div style={S.statGrid}>
+                <div style={S.stat("#4fc3f7", true)} onClick={() => { setFilterDate(todayStr()); setView("history"); }}>
+                  <div style={S.statLabel}>THB Delivered</div>
+                  <div style={S.statVal}>{formatNum(todayTHBSold, 0)}</div>
+                  <div style={S.statCur}>Thai Baht today · tap for list</div>
+                </div>
+                <div style={S.stat("#ce93d8", true)} onClick={() => { setFilterDate(todayStr()); setView("history"); }}>
+                  <div style={S.statLabel}>Entries</div>
+                  <div style={S.statVal}>{todaySells.length}</div>
+                  <div style={S.statCur}>Today · tap for list</div>
+                </div>
+                {isAdmin && (
+                  <div style={S.stat("#81c784")}>
+                    <div style={S.statLabel}>BDT Sent</div>
+                    <div style={S.statVal}>{formatNum(todayBDTSent, 0)}</div>
+                    <div style={S.statCur}>Bangladeshi Taka</div>
+                  </div>
+                )}
+                {isAdmin && (
+                  <div style={S.stat("#f44336", true)} onClick={() => setView("dues")}>
+                    <div style={S.statLabel}>Remaining Balance</div>
+                    <div style={{ ...S.statVal, color: todayDue > 0 ? "#f44336" : "#4caf50" }}>{formatNum(todayDue, 0)}</div>
+                    <div style={S.statCur}>BDT due today · tap for dues</div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div style={S.card}>
+              <div style={S.cardTitle}>📆 This Month Summary — tap any box for details</div>
+              <div style={S.statGrid}>
+                <div style={S.stat("#4fc3f7", true)} onClick={() => setView("history")}>
+                  <div style={S.statLabel}>THB Delivered</div>
+                  <div style={S.statVal}>{formatNum(monthTHBDelivered, 0)}</div>
+                  <div style={S.statCur}>{monthSells.length} deliveries this month</div>
+                </div>
+                <div style={S.stat("#ff8a65", true)} onClick={() => { setExpFilterDate(todayStr()); setView("expenses"); }}>
+                  <div style={S.statLabel}>Expenses</div>
+                  <div style={S.statVal}>{formatNum(monthExpTotal, 0)}</div>
+                  <div style={S.statCur}>THB month · today: {formatNum(todayExpTotal, 0)}</div>
+                </div>
+                {isAdmin && (
+                  <div style={S.stat("#4caf50", true)} onClick={() => setView("history")}>
+                    <div style={S.statLabel}>Gross Profit (month)</div>
+                    <div style={{ ...S.statVal, color: (monthGross ?? 0) >= 0 ? "#4caf50" : "#f44336" }}>{monthGross === null ? "—" : formatNum(monthGross, 0)}</div>
+                    <div style={S.statCur}>BDT before expenses</div>
+                  </div>
+                )}
+                {isAdmin && (
+                  <div style={S.stat("#aed581", true)} onClick={() => { setExpFilterDate(todayStr()); setView("expenses"); }}>
+                    <div style={S.statLabel}>NET Profit (month)</div>
+                    <div style={{ ...S.statVal, color: (monthNet ?? 0) >= 0 ? "#4caf50" : "#f44336" }}>{monthNet === null ? "—" : formatNum(monthNet, 0)}</div>
+                    <div style={S.statCur}>Gross − expenses ({formatNum(monthExpBDT, 0)} BDT)</div>
+                  </div>
+                )}
+                {isAdmin && (
+                  <div style={S.stat("#81c784", true)} onClick={() => setView("history")}>
+                    <div style={S.statLabel}>BDT Sent (month)</div>
+                    <div style={S.statVal}>{formatNum(monthBDTSent, 0)}</div>
+                    <div style={S.statCur}>Bangladeshi Taka</div>
+                  </div>
+                )}
+                {isAdmin && (
+                  <div style={S.stat("#f44336", true)} onClick={() => setView("dues")}>
+                    <div style={S.statLabel}>Customer Dues</div>
+                    <div style={S.statVal}>{formatNum(totalDue, 0)}</div>
+                    <div style={S.statCur}>{dueSells.length} pending · tap for list</div>
+                  </div>
+                )}
+                {isAdmin && (
+                  <div style={S.stat("#ffb74d", true)} onClick={() => setView("supplier")}>
+                    <div style={S.statLabel}>Owed to Suppliers</div>
+                    <div style={S.statVal}>{formatNum(totalSupplierDue, 0)}</div>
+                    <div style={S.statCur}>{supplierDue.length} pending{totalSupplierAdvance > 0 ? ` · adv: ${formatNum(totalSupplierAdvance, 0)}` : ""}</div>
+                  </div>
+                )}
+                {isAdmin && (
+                  <div style={S.stat("#4dd0e1", true)} onClick={() => setView("supplier")}>
+                    <div style={S.statLabel}>Supplier Payments</div>
+                    <div style={S.statVal}>{formatNum(suppliers.reduce((s, b) => s + (b.amountPaid || 0), 0), 0)}</div>
+                    <div style={S.statCur}>BDT paid · tap for ledger</div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {isAdmin && pendingPricing.length > 0 && (
+              <div style={{ ...S.card, border: "1px solid #ffb74d55" }}>
+                <div style={{ ...S.cardTitle, color: "#ffb74d" }}>💰 Set Selling Price — {pendingPricing.length} waiting</div>
+                {pendingPricing.slice(0, 6).map(tx => (
+                  <div key={tx.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #1e3a5f", padding: "8px 0" }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{tx.customerName}</div>
+                      <div style={{ fontSize: 11, color: "#7fa8c9" }}>{tx.date} · {formatNum(tx.thbAmount)} THB delivered{tx.customerPhone ? ` · 📞 ${tx.customerPhone}` : ""}</div>
+                    </div>
+                    <button style={{ ...S.payBtn(false), fontSize: 12, color: "#ffb74d", borderColor: "#ffb74d55" }}
+                      onClick={() => startEditSell(tx)}>💰 Set Price</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {isAdmin && (
+              <div style={S.card}>
+                <div style={S.cardTitle}>👑 Owner Overview (hidden from staff)</div>
+                <div style={S.statGrid}>
+                  <div style={S.stat("#ffb74d", true)} onClick={() => setView("supplier")}>
+                    <div style={S.statLabel}>THB Bought Today</div>
+                    <div style={S.statVal}>{formatNum(todayTHBBought, 0)}</div>
+                    <div style={S.statCur}>Cost: {formatNum(todayBuyCost, 0)} BDT</div>
+                  </div>
+                  <div style={S.stat("#4dd0e1")}>
+                    <div style={S.statLabel}>THB Stock Left</div>
+                    <div style={{ ...S.statVal, color: thbStock < 0 ? "#f44336" : "#e8edf2" }}>{formatNum(thbStock, 0)}</div>
+                    <div style={S.statCur}>Bought − Sold (all time)</div>
+                  </div>
+                  <div style={S.stat("#aed581")}>
+                    <div style={S.statLabel}>Avg Buy Rate</div>
+                    <div style={S.statVal}>{avgBuyRate > 0 ? formatNum(avgBuyRate, 4) : "—"}</div>
+                    <div style={S.statCur}>BDT per THB</div>
+                  </div>
+                  <div style={S.stat("#ff8a65", true)} onClick={() => { setExpFilterDate(todayStr()); setView("expenses"); }}>
+                    <div style={S.statLabel}>Today's Expenses</div>
+                    <div style={S.statVal}>{formatNum(todayExpTotal, 0)}</div>
+                    <div style={S.statCur}>THB · month: {formatNum(monthExpTotal, 0)}</div>
+                  </div>
+                  <div style={S.stat("#4caf50")}>
+                    <div style={S.statLabel}>Today Gross Profit</div>
+                    <div style={{ ...S.statVal, color: (todayGross ?? 0) >= 0 ? "#4caf50" : "#f44336" }}>{todayGross === null ? "—" : formatNum(todayGross, 0)}</div>
+                    <div style={S.statCur}>{todayGross === null ? "Add a Buy entry to enable" : "BDT · (Sell−Buy rate)×THB · expenses NOT deducted"}</div>
+                  </div>
+                </div>
+                {totalSupplierDue > 0 && (
+                  <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 8, background: "#1e140a", border: "1px solid #ffb74d55", fontSize: 13 }}>
+                    ⚠️ You owe suppliers: <b style={{ color: "#ffb74d" }}>{formatNum(totalSupplierDue)} BDT</b>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div>
+            {!isAdmin && assignedPending.length > 0 && (
+              <div style={{ ...S.card, border: "2px solid #ffb74d" }}>
+                <div style={{ ...S.cardTitle, color: "#ffb74d" }}>📬 Delivery Jobs from Boss — {assignedPending.length} waiting</div>
+                {assignedPending.map(tx => (
+                  <div key={tx.id} style={{ borderBottom: "1px solid #1e3a5f", padding: "10px 0" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: 15 }}>{tx.customerName}</div>
+                        <div style={{ fontSize: 12, color: "#7fa8c9" }}>{tx.date}{tx.customerPhone ? ` · 📞 ${tx.customerPhone}` : ""}</div>
+                      </div>
+                      <div style={{ fontWeight: 800, fontSize: 16, color: "#4fc3f7" }}>{formatNum(tx.thbAmount, 0)} THB</div>
+                    </div>
+                    {tx.notes ? <div style={{ fontSize: 11, color: "#5a8aaa", marginTop: 4 }}>📝 {tx.notes}</div> : null}
+                    <button style={{ marginTop: 8, width: "100%", padding: "10px 0", borderRadius: 8, border: "none", background: "#2e7d32", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+                      onClick={() => toggleDelivered(tx.id)}>✅ Mark Delivered to Customer</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {isAdmin && assignedPending.length > 0 && (
+              <div style={{ ...S.card, border: "1px solid #ffb74d55" }}>
+                <div style={{ ...S.cardTitle, color: "#ffb74d" }}>📬 Assigned Deliveries Pending — {assignedPending.length}</div>
+                {assignedPending.map(tx => (
+                  <div key={tx.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1e3a5f", fontSize: 13 }}>
+                    <span><b>{tx.customerName}</b> → 👤 {tx.assignedTo}</span>
+                    <span style={{ color: "#4fc3f7", fontWeight: 700 }}>{formatNum(tx.thbAmount, 0)} THB</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div style={S.card}>
+              <div style={S.cardTitle}>💼 THB In Hand (Staff Balance)</div>
+              <div style={S.statGrid}>
+                <div style={S.stat("#4dd0e1")}>
+                  <div style={S.statLabel}>Received from Boss</div>
+                  <div style={S.statVal}>{formatNum(totalFloatReceived, 0)}</div>
+                  <div style={S.statCur}>THB total (+{formatNum(todayFloatReceived, 0)} today)</div>
+                </div>
+                <div style={S.stat(floatBalance < 0 ? "#f44336" : "#4caf50")}>
+                  <div style={S.statLabel}>Remaining THB Balance</div>
+                  <div style={{ ...S.statVal, color: floatBalance < 0 ? "#f44336" : "#4caf50" }}>{formatNum(floatBalance, 0)}</div>
+                  <div style={S.statCur}>Received − Sold</div>
+                </div>
+              </div>
+              {!showFloatForm ? (
+                <button style={{ marginTop: 10, width: "100%", padding: "11px 0", borderRadius: 10, border: "1px solid #4dd0e155", background: "#0a2a30", color: "#4dd0e1", fontWeight: 700, fontSize: 14, cursor: "pointer" }}
+                  onClick={() => setShowFloatForm(true)}>+ Received THB from Boss</button>
+              ) : (
+                <div style={{ marginTop: 10, background: "#0a2a30", border: "1px solid #4dd0e155", borderRadius: 10, padding: 12 }}>
+                  <label style={S.label}>THB Amount Received *</label>
+                  <input style={S.input} type="number" inputMode="decimal" placeholder="0.00" value={floatAmt} onChange={e => setFloatAmt(e.target.value)} autoFocus />
+                  <div style={{ marginTop: 8 }}>
+                    <label style={S.label}>Date Received</label>
+                    <DateField value={floatDate} onChange={setFloatDate} />
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <label style={S.label}>Received By</label>
+                    <div style={S.payRow}>
+                      {["Cash", "Bank", "Other"].map(m => (
+                        <button key={m} style={S.payBtn(floatMethod === m)} onClick={() => setFloatMethod(m)}>{m}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <label style={S.label}>Note (optional)</label>
+                    <input style={S.input} placeholder="e.g. morning cash" value={floatNote} onChange={e => setFloatNote(e.target.value)} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    <button style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", background: "#00838f", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }} onClick={addFloatEntry}>Save ✓</button>
+                    <button style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "1px solid #1e3a5f", background: "transparent", color: "#5a8aaa", fontSize: 14, cursor: "pointer" }} onClick={() => { setShowFloatForm(false); setFloatAmt(""); setFloatNote(""); }}>Cancel</button>
+                  </div>
+                </div>
+              )}
+              {floatEntries.length > 0 && (
+                <div style={{ marginTop: 10, background: "#0f1923", borderRadius: 8, padding: "8px 10px", maxHeight: 140, overflowY: "auto" }}>
+                  <div style={{ fontSize: 10, color: "#5a8aaa", fontWeight: 700, marginBottom: 4 }}>📥 RECEIVED HISTORY</div>
+                  {floatEntries.slice(0, 8).map(f => (
+                    <div key={f.id} style={{ fontSize: 12, color: "#7fa8c9", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "2px 0" }}>
+                      <span>{f.date} · {f.method || "Cash"}{f.enteredBy && f.enteredBy !== "Owner" && f.enteredBy !== "admin" && f.enteredBy !== "staff" ? ` · ${f.enteredBy}` : ""}{f.notes ? ` · ${f.notes}` : ""}</span>
+                      <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <b style={{ color: "#4dd0e1" }}>{formatNum(f.amount, 0)} THB</b>
+                        {isAdmin && <button style={{ ...S.delBtn, fontSize: 12 }} onClick={() => deleteFloatEntryTap(f.id)}>{confirmDelId === f.id ? "❌ Sure?" : "🗑"}</button>}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {undelivered.length > 0 && (
+                <div style={{ marginTop: 10, padding: "8px 10px", borderRadius: 8, background: "#1e140a", border: "1px solid #ffb74d55", fontSize: 12 }}>
+                  🚚 <b style={{ color: "#ffb74d" }}>{undelivered.length}</b> customer payment{undelivered.length > 1 ? "s" : ""} not delivered yet — see History
+                </div>
+              )}
+            </div>
+
+            <div style={S.card}>
+              <div style={S.cardTitle}>🕐 Recent Sell Entries</div>
+              {todaySells.length === 0 ? (
+                <div style={{ textAlign: "center", color: "#4a6a85", padding: "20px 0", fontSize: 13 }}>No sell entries today yet</div>
+              ) : todaySells.slice(0, wide ? 6 : 3).map(tx => (
+                <div key={tx.id} style={{ borderBottom: "1px solid #1e3a5f", paddingBottom: 10, marginBottom: 10 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between" }}>
+                    <span style={{ fontWeight: 700, fontSize: 14 }}>{tx.customerName}</span>
+                    <span style={S.txType("#1a3a5c", "#4fc3f7")}>SELL</span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#7fa8c9", marginTop: 4 }}>
+                    {isAdmin
+                      ? `${formatNum(tx.thbAmount)} THB @ ${tx.rate} = ${formatNum(tx.bdtAmount)} BDT`
+                      : `${formatNum(tx.thbAmount)} THB · ${tx.delivered ? "✅ Delivered" : "🚚 Pending"}`}
+                  </div>
+                  {isAdmin && tx.balanceDue > 0.01 && <div style={{ color: "#f44336", fontSize: 12, marginTop: 2 }}>Remaining: {formatNum(tx.balanceDue)} BDT</div>}
+                </div>
+              ))}
+            </div>
+            <button style={S.saveBtn()} onClick={() => goto("entry")}>{isAdmin ? "+ New Sell Entry" : "+ New Delivery Entry"}</button>
+            {isAdmin && <button style={S.saveBtn("linear-gradient(135deg,#e65100,#bf360c)")} onClick={() => goto("buy")}>+ New Buy Entry (Owner)</button>}
+          </div>
+        </div>
+      )}
+
+      {/* SELL ENTRY */}
+      {view === "entry" && (wide ? <div style={{ maxWidth: 560, margin: "0 auto" }}>{sellForm}</div> : sellForm)}
+
+      {/* BUY ENTRY — admin only */}
+      {view === "buy" && isAdmin && (wide ? <div style={{ maxWidth: 560, margin: "0 auto" }}>{buyFormUI}</div> : buyFormUI)}
+
+      {/* SUPPLIERS — admin only */}
+      {view === "supplier" && isAdmin && (
+        <>
+          <div style={S.card}>
+            <div style={S.cardTitle}>🏦 Supplier Ledger (Owner Only)</div>
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
+              <span>Total THB bought: <b style={{ color: "#ffb74d" }}>{formatNum(totalTHBBought, 0)}</b></span>
+              <span>Owed to suppliers: <b style={{ color: "#f44336" }}>{formatNum(totalSupplierDue)} BDT</b></span>
+              {totalSupplierAdvance > 0 && <span>💰 Your advance with suppliers: <b style={{ color: "#4caf50" }}>{formatNum(totalSupplierAdvance)} BDT</b></span>}
+            </div>
+          </div>
+          {suppliers.length === 0 ? (
+            <div style={S.noData}>No buy entries yet. Tap "Buy" to add one.</div>
+          ) : wide ? (
+            <div style={{ ...S.card, overflowX: "auto" }}>
+              <table style={S.table}>
+                <thead><tr>
+                  <th style={S.th}>Date</th><th style={S.th}>Supplier</th><th style={S.th}>Contact</th>
+                  <th style={S.th}>THB</th><th style={S.th}>Rate</th><th style={S.th}>Cost BDT</th>
+                  <th style={S.th}>Payments</th><th style={S.th}>Owed</th><th style={S.th}></th>
+                </tr></thead>
+                <tbody>
+                  {suppliers.map(b => (
+                    <tr key={b.id}>
+                      <td style={S.td}>{b.date}<br /><span style={{ fontSize: 10, color: "#5a8aaa" }}>{b.time}</span></td>
+                      <td style={{ ...S.td, fontWeight: 700 }}>{b.supplierName}</td>
+                      <td style={S.td}>{b.supplierContact || "—"}</td>
+                      <td style={S.td}>{formatNum(b.thbAmount)}</td>
+                      <td style={S.td}>{b.rate}</td>
+                      <td style={S.td}>{formatNum(b.bdtCost)}</td>
+                      <td style={{ ...S.td, whiteSpace: "normal", minWidth: 160 }}>
+                        {(b.payments || []).length === 0 ? "—" : b.payments.map((p, i) => (
+                          <div key={i} style={{ fontSize: 11 }}>{p.date} · {p.method}: <span style={{ color: "#81c784" }}>{formatNum(p.amount)}</span></div>
+                        ))}
+                      </td>
+                      <td style={{ ...S.td, color: b.balanceDue > 0.01 ? "#ffb74d" : "#4caf50", fontWeight: 700 }}>{b.balanceDue > 0.01 ? formatNum(b.balanceDue) : b.balanceDue < -0.01 ? `💰 Adv ${formatNum(Math.abs(b.balanceDue))}` : "✅ Paid"}</td>
+                      <td style={S.td}>
+                        <button style={{ ...S.payBtn(false), padding: "4px 10px", fontSize: 11, marginRight: 6 }} onClick={() => { setPayingSupplierId(b.id); setSupPayAmt(""); setSupPayDate(todayStr()); }}>+ Pay</button>
+                        {b.balanceDue < -0.01 && <button style={{ ...S.payBtn(false), padding: "4px 10px", fontSize: 11, marginRight: 6, color: "#4caf50", borderColor: "#4caf5055" }} onClick={() => useAdvanceForNewBuy(b)}>🔄 Use Adv</button>}
+                        <button style={S.delBtn} onClick={() => deleteBuy(b.id)}>{confirmDelId === b.id ? "❌ Sure?" : "🗑"}</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {payingSupplierId && (() => {
+                const b = suppliers.find(s => s.id === payingSupplierId);
+                if (!b) return null;
+                return (
+                  <div style={{ marginTop: 12, background: "#0d3320", border: "1px solid #81c78455", borderRadius: 10, padding: 14, maxWidth: 420 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8, color: "#81c784" }}>💵 Payment to {b.supplierName} — remaining {formatNum(b.balanceDue)} BDT</div>
+                    <label style={S.label}>Amount (BDT)</label>
+                    <input style={S.input} type="number" inputMode="decimal" placeholder="0.00" value={supPayAmt} onChange={e => setSupPayAmt(e.target.value)} autoFocus />
+                    <div style={{ marginTop: 8 }}>
+                      <label style={S.label}>Payment Date</label>
+                      <DateField value={supPayDate} onChange={setSupPayDate} />
+                    </div>
+                    <div style={{ marginTop: 8 }}>
+                      <label style={S.label}>Method</label>
+                      <div style={S.payRow}>
+                        {["Cash", "Bank Transfer", "Bank Deposit", "Other"].map(m => (
+                          <button key={m} style={S.payBtn(supPayMethod === m)} onClick={() => setSupPayMethod(m)}>{m}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                      <button style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", background: "#2e7d32", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }} onClick={() => addSupplierPayment(b.id)}>Save ✓</button>
+                      <button style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "1px solid #1e3a5f", background: "transparent", color: "#5a8aaa", fontSize: 14, cursor: "pointer" }} onClick={() => setPayingSupplierId(null)}>Cancel</button>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          ) : suppliers.map(b => (
+            <div key={b.id} style={S.txCard("#ffb74d")}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{b.supplierName}</div>
+                  <div style={{ fontSize: 11, color: "#5a8aaa" }}>{b.date} · {b.time}{b.supplierContact ? ` · 📞 ${b.supplierContact}` : ""}</div>
+                </div>
+                <button style={S.delBtn} onClick={() => deleteBuy(b.id)}>{confirmDelId === b.id ? "❌ Sure?" : "🗑"}</button>
+              </div>
+              <div style={{ display: "flex", gap: 10, fontSize: 13, color: "#7fa8c9", flexWrap: "wrap", marginTop: 6 }}>
+                <span>📥 {formatNum(b.thbAmount)} THB</span>
+                <span>📈 @ {b.rate}</span>
+                <span>💰 Cost: {formatNum(b.bdtCost)} BDT</span>
+              </div>
+              {b.balanceDue > 0.01
+                ? <div style={{ marginTop: 6, fontSize: 12, color: "#ffb74d", fontWeight: 700 }}>⚠ You owe: {formatNum(b.balanceDue)} BDT</div>
+                : b.balanceDue < -0.01
+                  ? <>
+                      <div style={{ marginTop: 6, fontSize: 12, color: "#4caf50", fontWeight: 700 }}>💰 Your advance with supplier: {formatNum(Math.abs(b.balanceDue))} BDT</div>
+                      <button style={{ marginTop: 8, width: "100%", padding: "9px 0", borderRadius: 8, border: "1px solid #4caf5055", background: "#0a1e0a", color: "#4caf50", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+                        onClick={() => useAdvanceForNewBuy(b)}>🔄 Supplier delivered THB? Apply Advance to New Buy</button>
+                    </>
+                  : <div style={{ marginTop: 6, fontSize: 12, color: "#4caf50", fontWeight: 700 }}>✅ Fully Paid</div>}
+              {(b.payments || []).length > 0 && (
+                <div style={{ marginTop: 8, background: "#0f1923", borderRadius: 8, padding: "8px 10px" }}>
+                  <div style={{ fontSize: 10, color: "#5a8aaa", fontWeight: 700, marginBottom: 4 }}>💵 PAYMENT HISTORY</div>
+                  {b.payments.map((p, i) => (
+                    <div key={i} style={{ fontSize: 12, color: "#7fa8c9", display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
+                      <span>{p.date} · {p.method}</span>
+                      <span style={{ color: "#81c784", fontWeight: 700 }}>{formatNum(p.amount)} BDT</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {payingSupplierId !== b.id && (
+                <button style={{ marginTop: 8, width: "100%", padding: "9px 0", borderRadius: 8, border: "1px solid #81c78455", background: "#0d3320", color: "#81c784", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+                  onClick={() => { setPayingSupplierId(b.id); setSupPayAmt(""); setSupPayDate(todayStr()); }}>+ Add Payment</button>
+              )}
+              {payingSupplierId === b.id && (
+                <div style={{ marginTop: 8, background: "#0d3320", border: "1px solid #81c78455", borderRadius: 10, padding: 12 }}>
+                  <label style={S.label}>Payment Amount (BDT) — {b.balanceDue > 0.01 ? `remaining ${formatNum(b.balanceDue)}` : "advance payment"}</label>
+                  <input style={S.input} type="number" inputMode="decimal" placeholder="0.00" value={supPayAmt} onChange={e => setSupPayAmt(e.target.value)} autoFocus />
+                  <div style={{ marginTop: 8 }}>
+                    <label style={S.label}>Payment Date</label>
+                    <DateField value={supPayDate} onChange={setSupPayDate} />
+                  </div>
+                  <div style={{ marginTop: 8 }}>
+                    <label style={S.label}>Method</label>
+                    <div style={S.payRow}>
+                      {["Cash", "Bank Transfer", "Bank Deposit", "Other"].map(m => (
+                        <button key={m} style={S.payBtn(supPayMethod === m)} onClick={() => setSupPayMethod(m)}>{m}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                    <button style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "none", background: "#2e7d32", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }} onClick={() => addSupplierPayment(b.id)}>Save ✓</button>
+                    <button style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: "1px solid #1e3a5f", background: "transparent", color: "#5a8aaa", fontSize: 14, cursor: "pointer" }} onClick={() => setPayingSupplierId(null)}>Cancel</button>
+                  </div>
+                </div>
+              )}
+              {b.notes ? <div style={{ fontSize: 11, color: "#5a8aaa", marginTop: 4 }}>📝 {b.notes}</div> : null}
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* HISTORY — sells only for staff, sells for admin too */}
+      {view === "history" && (
+        <>
+          <div style={{ ...S.dateBar, gap: 8 }}>
+            {[["day","📅 Today"],["week","🗓 Week"],["month","📆 Month"]].map(([m, label]) => (
+              <button key={m} style={{ flex: 1, padding: "9px 0", borderRadius: 8, border: `2px solid ${histMode === m ? "#4fc3f7" : "#1e3a5f"}`, background: histMode === m ? "#1a3a5c" : "#0f1923", color: histMode === m ? "#4fc3f7" : "#5a8aaa", fontWeight: 700, fontSize: 13, cursor: "pointer" }}
+                onClick={() => setHistMode(m)}>{label}</button>
+            ))}
+          </div>
+
+          <div style={{ ...S.card, padding: 12 }}>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 14, justifyContent: "center" }}>
+              <span>Entries: <b style={{ color: "#ce93d8" }}>{rangeSells.length}</b></span>
+              <span>THB: <b style={{ color: "#4fc3f7" }}>{formatNum(rangeSells.reduce((s, t) => s + t.thbAmount, 0), 0)}</b></span>
+              {isAdmin && <span>BDT: <b style={{ color: "#81c784" }}>{formatNum(rangeSells.reduce((s, t) => s + t.bdtAmount, 0), 0)}</b></span>}
+              {isAdmin && <span>Due: <b style={{ color: "#f44336" }}>{formatNum(rangeSells.reduce((s, t) => s + t.balanceDue, 0), 0)}</b></span>}
+              {isAdmin && avgBuyRate > 0 && <span>Gross: <b style={{ color: "#4caf50" }}>{formatNum(rangeSells.filter(t => t.rate > 0).reduce((s, t) => s + txGross(t), 0), 0)}</b></span>}
+            </div>
+          </div>
+
+          {rangeSells.length === 0 ? (
+            <div style={S.noData}>No sell entries in this period</div>
+          ) : wide ? (
+            <div style={{ ...S.card, overflowX: "auto" }}>
+              <table style={S.table}>
+                <thead><tr>
+                  <th style={S.th}>Date</th><th style={S.th}>Time</th><th style={S.th}>Customer</th><th style={S.th}>Phone</th><th style={S.th}>THB</th>
+                  {isAdmin && <th style={S.th}>Rate</th>}
+                  {isAdmin && <th style={S.th}>BDT</th>}
+                  {isAdmin && <th style={S.th}>Comm.</th>}
+                  {isAdmin && <th style={S.th}>Profit</th>}
+                  {isAdmin && <th style={S.th}>Paid</th>}
+                  {isAdmin && <th style={S.th}>Remaining</th>}
+                  {isAdmin && <th style={S.th}>Method</th>}
+                  <th style={S.th}>Delivery</th><th style={S.th}></th>
+                </tr></thead>
+                <tbody>
+                  {rangeSells.map(tx => (
+                    <tr key={tx.id}>
+                      <td style={S.td}>{tx.date.slice(5)}</td>
+                      <td style={S.td}>{tx.time}</td>
+                      <td style={{ ...S.td, fontWeight: 700 }}>{tx.customerName}</td>
+                      <td style={S.td}>{tx.customerPhone || "—"}</td>
+                      <td style={S.td}>{formatNum(tx.thbAmount)}</td>
+                      {isAdmin && <td style={S.td}>{tx.rate}</td>}
+                      {isAdmin && <td style={S.td}>{formatNum(tx.bdtAmount)}</td>}
+                      {isAdmin && <td style={S.td}>{tx.commission ? formatNum(tx.commission) : "—"}</td>}
+                      {isAdmin && <td style={{ ...S.td, color: (txGross(tx) ?? 0) >= 0 ? "#4caf50" : "#f44336", fontWeight: 700 }}>{txGross(tx) === null ? "—" : (txGross(tx) >= 0 ? "+" : "") + formatNum(txGross(tx), 0)}</td>}
+                      {isAdmin && <td style={S.td}>{formatNum(tx.amountPaid)}</td>}
+                      {isAdmin && <td style={{ ...S.td, color: tx.balanceDue > 0.01 ? "#f44336" : "#4caf50", fontWeight: 700 }}>{tx.balanceDue > 0.01 ? formatNum(tx.balanceDue) : "✅ Paid"}</td>}
+                      {isAdmin && <td style={S.td}>{tx.paymentMethod}</td>}
+                      <td style={S.td}>
+                        <button style={{ ...S.payBtn(false), padding: "4px 10px", fontSize: 11, color: tx.delivered ? "#4caf50" : "#ffb74d", borderColor: tx.delivered ? "#4caf5055" : "#ffb74d55" }}
+                          onClick={() => toggleDelivered(tx.id)}>{tx.delivered ? "✅ Delivered" : "🚚 Pending"}</button>
+                      </td>
+                      <td style={S.td}>
+                        {isAdmin && <button style={{ ...S.payBtn(false), padding: "4px 10px", fontSize: 11, marginRight: 6 }} onClick={() => startEditSell(tx)}>✏️ Edit</button>}
+                        {isAdmin && <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button style={{ ...S.payBtn(false), padding: "4px 10px", fontSize: 11 }} onClick={() => startEditSell(tx)}>✏️</button>
+                  <button style={S.delBtn} onClick={() => deleteSell(tx.id)}>{confirmDelId === tx.id ? "❌ Sure?" : "🗑"}</button>
+                </span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : rangeDates.map(d => (
+            <div key={d}>
+              {histMode !== "day" && (
+                <div style={{ margin: "14px 14px 0", display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#1a3a5c", borderRadius: 8 }}>
+                  <span style={{ fontWeight: 800, fontSize: 13, color: "#4fc3f7" }}>{d === todayStr() ? "📅 Today" : d}</span>
+                  <span style={{ fontSize: 12, color: "#7fa8c9" }}>{rangeSells.filter(t => t.date === d).length} · {formatNum(rangeSells.filter(t => t.date === d).reduce((s, t) => s + t.thbAmount, 0), 0)} THB</span>
+                </div>
+              )}
+              {rangeSells.filter(t => t.date === d).map(tx => (
+            <div key={tx.id} style={S.txCard("#4fc3f7")}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>{tx.customerName}</span>
+                    <span style={S.txType("#1a3a5c", "#4fc3f7")}>SELL</span>
+                    {!isAdmin && (tx.assignedTo || "") === whoIs && (tx.enteredBy || "") !== whoIs && <span style={S.txType("#3d2c00", "#ffb74d")}>📬 FROM BOSS</span>}
+                    {isAdmin && tx.assignedTo && <span style={S.txType("#3d2c00", "#ffb74d")}>📬 {tx.assignedTo}</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#5a8aaa" }}>{tx.time} · {tx.paymentMethod}{tx.customerPhone ? ` · 📞 ${tx.customerPhone}` : ""}{isAdmin && tx.enteredBy && tx.enteredBy !== "Owner" && tx.enteredBy !== "admin" ? ` · ✍️ ${tx.enteredBy === "staff" ? "Staff" : tx.enteredBy}` : ""}</div>
+                </div>
+                {isAdmin && <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <button style={{ ...S.payBtn(false), padding: "4px 10px", fontSize: 11 }} onClick={() => startEditSell(tx)}>✏️</button>
+                  <button style={S.delBtn} onClick={() => deleteSell(tx.id)}>{confirmDelId === tx.id ? "❌ Sure?" : "🗑"}</button>
+                </span>}
+              </div>
+              <div style={{ display: "flex", gap: 10, fontSize: 13, color: "#7fa8c9", flexWrap: "wrap", marginTop: 4 }}>
+                <span>💰 {formatNum(tx.thbAmount)} THB</span>
+                {isAdmin && <span>📈 @ {tx.rate}</span>}
+                {isAdmin && <span>🇧🇩 {formatNum(tx.bdtAmount)} BDT</span>}
+                {isAdmin && tx.commission > 0 && <span>💼 {formatNum(tx.commission)} THB</span>}
+                {isAdmin && txGross(tx) !== null && <span style={{ color: txGross(tx) >= 0 ? "#4caf50" : "#f44336", fontWeight: 700 }}>📈 {txGross(tx) >= 0 ? "+" : ""}{formatNum(txGross(tx), 0)} profit</span>}
+              </div>
+              {isAdmin && (tx.balanceDue > 0.01
+                ? <div style={{ marginTop: 6, fontSize: 12, color: "#f44336", fontWeight: 700 }}>⚠ Remaining: {formatNum(tx.balanceDue)} BDT</div>
+                : <div style={{ marginTop: 6, fontSize: 12, color: "#4caf50", fontWeight: 700 }}>✅ Fully Paid</div>)}
+              <button style={{ marginTop: 8, width: "100%", padding: "8px 0", borderRadius: 8, border: `1px solid ${tx.delivered ? "#4caf5055" : "#ffb74d55"}`, background: tx.delivered ? "#0a1e0a" : "#1e140a", color: tx.delivered ? "#4caf50" : "#ffb74d", fontWeight: 700, fontSize: 12, cursor: "pointer" }}
+                onClick={() => toggleDelivered(tx.id)}>
+                {tx.delivered ? "✅ Delivered to Customer — tap to undo" : "🚚 Not Delivered — tap when delivered"}
+              </button>
+              {tx.notes ? <div style={{ fontSize: 11, color: "#5a8aaa", marginTop: 4 }}>📝 {tx.notes}</div> : null}
+            </div>
+              ))}
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* EXPENSES */}
+      {view === "expenses" && (
+        <>
+          <div style={S.card}>
+            <div style={S.cardTitle}>💸 Delivery Expenses</div>
+            <div style={S.statGrid}>
+              <div style={S.stat("#ff8a65")}>
+                <div style={S.statLabel}>Today's Expenses</div>
+                <div style={S.statVal}>{formatNum(todayExpTotal, 0)}</div>
+                <div style={S.statCur}>THB · {todayExpenses.length} entries</div>
+              </div>
+              <div style={S.stat("#ffb74d")}>
+                <div style={S.statLabel}>This Month Total</div>
+                <div style={S.statVal}>{formatNum(monthExpTotal, 0)}</div>
+                <div style={S.statCur}>THB to reimburse staff</div>
+              </div>
+            </div>
+          </div>
+
+          <div style={S.card}>
+            <div style={S.cardTitle}>➕ Add Expense</div>
+            <label style={S.label}>Amount (THB) *</label>
+            <input style={S.input} type="number" inputMode="decimal" placeholder="0.00" value={expAmt} onChange={e => { setExpAmt(e.target.value); setExpError(""); }} />
+            <div style={{ marginTop: 8 }}>
+              <label style={S.label}>Category</label>
+              <div style={S.payRow}>
+                {["Motorbike Rent", "Transport", "Fuel", "Food", "Mobile/Data", "Other"].map(m => (
+                  <button key={m} style={S.payBtn(expCategory === m)} onClick={() => setExpCategory(m)}>{m}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <label style={S.label}>Date</label>
+              <DateField value={expDate} onChange={setExpDate} />
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <label style={S.label}>For which delivery? (optional)</label>
+              <select style={{ ...S.input, appearance: "auto" }} value={expLink} onChange={e => setExpLink(e.target.value)}>
+                <option value="">— General / not linked —</option>
+                {visSells.filter(t => t.date === (expDate || todayStr())).map(t => (
+                  <option key={t.id} value={`${t.customerName} (${formatNum(t.thbAmount, 0)} THB)`}>
+                    {t.customerName} — {formatNum(t.thbAmount, 0)} THB
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <label style={S.label}>Note (optional)</label>
+              <input style={S.input} placeholder="e.g. bike rent for Rahim delivery" value={expNote} onChange={e => setExpNote(e.target.value)} />
+            </div>
+            {expError && <div style={{ marginTop: 8, color: "#f44336", fontSize: 13, fontWeight: 600 }}>{expError}</div>}
+            {expSavedMsg && <div style={{ marginTop: 8, padding: "10px 12px", borderRadius: 8, background: "#0a1e0a", border: "1px solid #4caf50", color: "#4caf50", fontSize: 14, fontWeight: 700, textAlign: "center" }}>✅ Expense saved!</div>}
+            <button style={{ marginTop: 12, width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: "linear-gradient(135deg,#e65100,#bf360c)", color: "#fff", fontWeight: 800, fontSize: 15, cursor: "pointer" }}
+              onClick={addExpense}>Save Expense ✓</button>
+          </div>
+
+          <div style={S.dateBar}>
+            <span style={{ fontSize: 12, color: "#5a8aaa" }}>Date:</span>
+            <div style={{ flex: 1 }}><DateField value={expFilterDate} onChange={setExpFilterDate} /></div>
+            <span style={{ fontSize: 12, color: "#ff8a65" }}>{filteredExpenses.length} · {formatNum(filteredExpenses.reduce((s, x) => s + x.amount, 0), 0)} THB</span>
+          </div>
+
+          {filteredExpenses.length === 0 ? (
+            <div style={S.noData}>No expenses on this date</div>
+          ) : filteredExpenses.map(x => (
+            <div key={x.id} style={S.txCard("#ff8a65")}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{x.category}</div>
+                  <div style={{ fontSize: 11, color: "#5a8aaa" }}>{x.date} · {x.time} · by {x.enteredBy === "Owner" || x.enteredBy === "admin" ? "👑 Owner" : `👤 ${x.enteredBy === "staff" ? "Staff" : x.enteredBy}`}</div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontWeight: 800, fontSize: 16, color: "#ff8a65" }}>{formatNum(x.amount)} THB</span>
+                  {isAdmin && <button style={S.delBtn} onClick={() => deleteExpense(x.id)}>{confirmDelId === x.id ? "❌ Sure?" : "🗑"}</button>}
+                </div>
+              </div>
+              {x.deliveryRef ? <div style={{ fontSize: 12, color: "#7fa8c9", marginTop: 4 }}>🚚 For: {x.deliveryRef}</div> : null}
+              {x.notes ? <div style={{ fontSize: 11, color: "#5a8aaa", marginTop: 4 }}>📝 {x.notes}</div> : null}
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* DUES */}
+      {view === "dues" && (
+        <>
+          <div style={{ background: "#2d1010", borderRadius: 12, padding: 16, margin: "12px 14px 0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <div style={{ fontSize: 11, color: "#f44336", fontWeight: 700 }}>TOTAL REMAINING FROM CUSTOMERS</div>
+              <div style={{ fontSize: 26, fontWeight: 800, color: "#f44336" }}>{formatNum(totalDue)} BDT</div>
+            </div>
+            <div style={{ fontSize: 30 }}>⚠️</div>
+          </div>
+          {dueSells.length === 0 ? (
+            <div style={S.noData}>🎉 No remaining balances!</div>
+          ) : dueSells.map(tx => (
+            <div key={tx.id} style={{ background: "#1e0a0a", borderRadius: 12, padding: 14, margin: "10px 14px 0", borderLeft: "3px solid #f44336" }}>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>{tx.customerName}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: "#f44336" }}>{formatNum(tx.balanceDue)} BDT remaining</div>
+              <div style={{ fontSize: 12, color: "#7fa8c9", marginTop: 4 }}>📅 {tx.date} · {tx.time} · {formatNum(tx.thbAmount)} THB @ {tx.rate}</div>
+              <div style={{ fontSize: 12, color: "#7fa8c9" }}>Total: {formatNum(tx.netBdt || tx.bdtAmount)} BDT · Paid: {formatNum(tx.amountPaid)} BDT</div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* MOBILE BOTTOM NAV */}
+      {!wide && (
+        <nav style={S.nav}>
+          {navItems.map(n => (
+            <button key={n.key} style={S.navBtn(view === n.key)} onClick={() => goto(n.key)}>
+              <span style={{ fontSize: 18 }}>{n.icon}</span>
+              <span>{n.label}</span>
+            </button>
+          ))}
+        </nav>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
